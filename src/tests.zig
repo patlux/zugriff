@@ -8,7 +8,19 @@ test {
     _ = @import("core/direct.zig");
     _ = @import("core/emoji.zig");
     _ = @import("core/calc.zig");
+    _ = @import("sync.zig");
+    _ = @import("files.zig");
+    _ = @import("app_scan.zig");
+    _ = @import("control.zig");
+    _ = @import("emoji_prefs.zig");
+    _ = @import("mac/apps.zig");
+    _ = @import("mac/icons.zig");
+    _ = @import("mac/hotkey.zig");
+    _ = @import("mac/launch.zig");
+    _ = @import("mac/panel.zig");
+    _ = @import("mac/insert.zig");
     _ = @import("ui/theme.zig");
     _ = @import("ui/glyphs.zig");
     _ = @import("ui/tests_palette.zig");
+    _ = @import("main.zig");
 }
