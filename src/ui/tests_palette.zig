@@ -231,6 +231,21 @@ test "keys typed before the panel had the keyboard join the query" {
     try expectLaunch(h.fake.nextActivation(), "Zotero");
 }
 
+test "enter and escape pressed before the panel had the keyboard still act" {
+    const apps = Apps.init(&.{ "Zoom", "Zotero" });
+    defer apps.deinit();
+    var h: Harness = undefined;
+    try h.init(apps.items);
+    defer h.deinit();
+    // No frame between the typed text and ↵: the press searches first.
+    try h.palette.typeAhead("zo");
+    try h.palette.pressAhead(.down, .{});
+    try h.palette.pressAhead(.enter, .{});
+    try expectLaunch(h.fake.nextActivation(), "Zotero");
+    try h.palette.pressAhead(.escape, .{});
+    try testing.expect(h.fake.take()[0] == .dismiss);
+}
+
 test "the arrows choose the app" {
     const apps = Apps.init(&.{ "Zoom", "Zotero" });
     defer apps.deinit();

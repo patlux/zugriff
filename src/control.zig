@@ -26,7 +26,8 @@ pub const Command = enum {
 /// must also come when the main thread is busy.
 const status_request = "status";
 /// From the UI process to the daemon (`--unload-mode process`): the keys
-/// typed while the UI process started, as one line of text.
+/// typed while the UI process started (`mac/catcher.zig`), as one line in
+/// brackets, so `request` trims no space the user typed at either end.
 pub const typed_request = "typed";
 
 /// `~/Library/Application Support/zugriff/control.sock`.

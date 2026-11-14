@@ -41,6 +41,10 @@ const S = ui.Shortcut;
 /// nanoui's plain keys (`input.key`), as tests and hosts without an input method send them.
 const Key = @typeInfo(@FieldType(@FieldType(ui.Context, "input"), "key")).optional.child;
 
+/// The keys a palette takes before it has the keyboard (`pressAhead`).
+pub const Pressed = enum { enter, escape, tab, up, down };
+pub const Mods = struct { cmd: bool = false, ctrl: bool = false, alt: bool = false, shift: bool = false };
+
 pub const search_placeholder = "Apps suchen …";
 const search_icon = @embedFile("assets/search.svg");
 /// The glyph on the tile of the "Emoji" row.
@@ -257,6 +261,17 @@ pub const Palette = struct {
         const joined = try std.mem.concat(p.gpa, u8, &.{ p.text(), typed });
         defer p.gpa.free(joined);
         p.query.set(joined);
+    }
+
+    /// A key pressed before the panel had the keyboard, after the text typed
+    /// before it: the query is searched first, then the key does what it
+    /// does in the panel.
+    pub fn pressAhead(p: *Palette, k: Pressed, m: Mods) !void {
+        if (!std.mem.eql(u8, p.seen.items, p.text())) try p.refresh();
+        const key_of: Key = switch (k) {
+            inline else => |tag| @field(Key, @tagName(tag)),
+        };
+        _ = try p.press(key_of, m);
     }
 
     /// The panel was closed to free memory; its window and caches go.
@@ -538,20 +553,24 @@ pub const Palette = struct {
 
     /// Keys as tests and other hosts without an input method send them.
     fn key(p: *Palette, c: *ui.Context, k: Key) !bool {
-        const mods = c.input.cmd or c.input.ctrl or c.input.alt;
+        return p.press(k, .{ .cmd = c.input.cmd, .ctrl = c.input.ctrl, .alt = c.input.alt, .shift = c.input.shift });
+    }
+
+    fn press(p: *Palette, k: Key, m: Mods) !bool {
+        const mods = m.cmd or m.ctrl or m.alt;
         switch (k) {
             .escape => p.escape(),
             .enter => {
-                if (c.input.cmd) try p.revealSelected() else if (c.input.alt) {
+                if (m.cmd) try p.revealSelected() else if (m.alt) {
                     if (!try calc_view.copySelected(p, .number)) p.beep();
-                } else try p.confirm(c.input.shift);
+                } else try p.confirm(m.shift);
             },
             .up => p.moveUp(),
             .down => p.moveDown(),
             .tab => if (p.emoji.active()) emoji_view.toggleTones(p),
             .left, .right => {
-                if (!p.emoji.active() or c.input.shift) return false;
-                if (c.input.alt) emoji_view.jumpSection(p, k == .right) else if (!mods) emoji_view.step(
+                if (!p.emoji.active() or m.shift) return false;
+                if (m.alt) emoji_view.jumpSection(p, k == .right) else if (!mods) emoji_view.step(
                     p,
                     k == .right,
                 ) else return false;

@@ -76,7 +76,10 @@ von zwei Arten (`--unload-mode`):
   geht dabei verloren, der Emoji-Verlauf liegt in der Datei und bleibt.
   Was nach dem Hotkey getippt wird, solange der UI-Prozess noch startet,
   nimmt ein unsichtbares Fangfenster des Daemons an; die Palette übernimmt
-  es, sobald sie vorne ist.
+  es, sobald sie vorne ist. Neben Text gilt das für ↵ (auch mit ⇧, ⌥, ⌘),
+  ⎋, ⇥, ↑ und ↓: Sie wirken nach der Übergabe in derselben Reihenfolge, ↵
+  erst, wenn die App-Liste da ist. Der Hotkey ein zweites Mal schließt die
+  Palette wieder, auch mitten im Start.
 
 ```sh
 ./zig-out/bin/zugriff run --hotkey alt+space --unload-after 60

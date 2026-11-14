@@ -141,8 +141,15 @@ pub const Daemon = struct {
             .hide => if (d.childRunning()) d.forward(.hide) catch |e| log.debug("hide: {t}", .{e}),
             .show, .toggle, .emoji => {
                 if (d.forward(c)) |_| return else |_| {}
-                // Started a moment ago and not listening yet: this press goes.
-                if (d.childRunning()) return log.info("UI-Prozess startet noch; {t} übergangen", .{c});
+                // Started a moment ago and not listening yet: the hot key
+                // again closes the palette once it is there, as ⎋ would.
+                if (d.childRunning()) {
+                    if (c != .show and d.catcher.isCatching()) {
+                        d.catcher.cancel();
+                        return log.info("UI-Prozess startet noch; {t} schließt sie gleich wieder", .{c});
+                    }
+                    return log.info("UI-Prozess startet noch; {t} übergangen", .{c});
+                }
                 // Nothing on screen: a toggle shows. Keys typed until the UI
                 // process has the keyboard go to the catcher, not the app in front.
                 d.catcher.begin();
@@ -157,10 +164,12 @@ pub const Daemon = struct {
     /// the keys typed since the hot key; the catcher goes on the main thread.
     fn typed(ctx: *anyopaque, buf: []u8) []const u8 {
         const d: *Daemon = @ptrCast(@alignCast(ctx));
-        const text = d.catcher.take(buf);
+        const text = d.catcher.take(buf[1 .. buf.len - 1]);
         _ = nanoui.App.onMain(d, endCatch);
         log.info("an UI-Prozess übergeben: {d} getippte Bytes", .{text.len});
-        return text;
+        buf[0] = '[';
+        buf[text.len + 1] = ']';
+        return buf[0 .. text.len + 2];
     }
 
     fn endCatch(ctx: ?*anyopaque) callconv(.c) void {

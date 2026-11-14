@@ -24,6 +24,7 @@ const hotkey = @import("mac/hotkey.zig");
 const insert = @import("mac/insert.zig");
 const launch = @import("mac/launch.zig");
 const panel = @import("mac/panel.zig");
+const catcher = @import("mac/catcher.zig");
 const intelligence = @import("mac/intelligence.zig");
 const Palette = ui_palette.Palette;
 const InsertSupport = ui_palette.InsertSupport;
@@ -94,6 +95,10 @@ pub const Agent = struct {
     /// daemon's socket, where the keys typed during the start wait until
     /// the panel has the keyboard.
     daemon_socket: ?[]const u8 = null,
+    /// Typed-ahead keys from the first ↵, ⎋, ⇥, ↑ or ↓ on, held until the
+    /// first app list is in: ↵ before it would find no app.
+    ahead: [catcher.max_bytes]u8 = undefined,
+    ahead_len: usize = 0,
     palette: Palette = undefined,
     visible: bool = false,
     /// The first show wants the icons that are not cached yet.
@@ -256,12 +261,50 @@ pub const Agent = struct {
         a.daemon_socket = null;
         var buf: [512]u8 = undefined;
         var fba: std.heap.FixedBufferAllocator = .init(&buf);
-        const text = control.request(fba.allocator(), a.io, socket, control.typed_request) catch |e|
+        const answer = control.request(fba.allocator(), a.io, socket, control.typed_request) catch |e|
             return log.warn("getippte Tasten nicht abgeholt: {t}", .{e});
-        if (text.len == 0) return;
-        a.palette.typeAhead(text) catch |e| return log.warn("getippte Tasten nicht übernommen: {t}", .{e});
-        log.info("vor dem Start getippt und übernommen: {d} Bytes", .{text.len});
+        if (answer.len < 2 or answer[0] != '[' or answer[answer.len - 1] != ']')
+            return log.warn("getippte Tasten unlesbar", .{});
+        const typed = answer[1 .. answer.len - 1];
+        if (typed.len == 0) return;
+        log.info("vor dem Start getippt: {d} Bytes", .{typed.len});
+        a.playTyped(typed);
         a.redraw();
+    }
+
+    /// Types the text into the query and presses the keys, in order; from
+    /// the first key on it waits for the first app list (`ahead`).
+    fn playTyped(a: *Agent, typed: []const u8) void {
+        var it = catcher.tokens(typed);
+        while (true) {
+            const rest = it.rest;
+            const token = it.next() orelse break;
+            switch (token) {
+                .text => |t| a.palette.typeAhead(t) catch |e|
+                    return log.warn("getippte Tasten nicht übernommen: {t}", .{e}),
+                .key => |k| {
+                    if (a.first_list) {
+                        @memcpy(a.ahead[0..rest.len], rest);
+                        a.ahead_len = rest.len;
+                        return log.info("getippte Tasten warten auf die App-Liste", .{});
+                    }
+                    const key: ui_palette.Pressed = switch (k.special) {
+                        .enter => .enter,
+                        .escape => .escape,
+                        .tab => .tab,
+                        .up => .up,
+                        .down => .down,
+                    };
+                    const mods: ui_palette.Mods = .{
+                        .shift = k.mods.shift,
+                        .alt = k.mods.option,
+                        .cmd = k.mods.command,
+                    };
+                    a.palette.pressAhead(key, mods) catch |e| return log.warn("getippte Taste {t}: {t}", .{ key, e });
+                    log.info("getippte Taste abgespielt: {t}", .{key});
+                },
+            }
+        }
     }
 
     /// Asks the scan thread for a fresh app list, unless one was asked for
@@ -534,6 +577,13 @@ pub const Agent = struct {
         defer a.gpa.free(missing);
         if (a.first_list) {
             a.first_list = false;
+            if (a.ahead_len > 0) {
+                var held: [catcher.max_bytes]u8 = undefined;
+                const n = a.ahead_len;
+                @memcpy(held[0..n], a.ahead[0..n]);
+                a.ahead_len = 0;
+                a.playTyped(held[0..n]);
+            }
             log.info("installierte Apps geladen: {d}, ohne Icon {d}", .{ list.items.len, missing.len });
             const t = std.Thread.spawn(.{}, pruneIcons, .{a}) catch null;
             if (t) |th| th.detach();
