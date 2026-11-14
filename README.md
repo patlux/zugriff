@@ -119,8 +119,7 @@ make install
 
 baut einen sauberen Stand in ReleaseSafe, signiert ihn mit Identität und
 Kennung der Rust-Version, legt ihn als `~/.local/share/zugriff/bin/zugriff`
-ab (dort lag die Rust-Binary; Pfad und Signatur behalten deren
-Bedienungshilfen-Erlaubnis) und startet den LaunchAgent
+ab (dort lag die Rust-Binary) und startet den LaunchAgent
 `local.zugriff` neu. Den LaunchAgent legt das Maschinen-Setup an; er
 startet die Palette mit `--unload-after 60 --unload-mode process`.
 
