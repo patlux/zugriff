@@ -3,6 +3,14 @@
 Versions follow SemVer. Entries come from the Markdown changesets in `.changeset/`.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the local release workflow.
 
+## 0.2.0 - 2026-11-14
+
+### Added
+
+- Type ? to see what the palette understands: seven topics with an example each, and Return puts the example into the search field so the palette shows at once what it does; the footer then says the query came from the help.
+- Typing help or hilfe brings up a Hilfe row above the app hits; Return on it opens the help.
+- The empty search shows a quiet ? Hilfe at the right of the search field, and its footer a tip about ? until the help was opened once.
+
 ## 0.1.0 - 2026-11-14
 
 ### Added
