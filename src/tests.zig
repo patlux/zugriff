@@ -6,4 +6,5 @@ test {
     _ = @import("core/matcher.zig");
     _ = @import("core/catalog.zig");
     _ = @import("core/direct.zig");
+    _ = @import("core/emoji.zig");
 }
