@@ -1,6 +1,6 @@
 ---
 type: added
-bump: minor
+bump: patch
 ---
 
 The help's footer names the running version.
