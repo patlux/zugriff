@@ -8,4 +8,7 @@ test {
     _ = @import("core/direct.zig");
     _ = @import("core/emoji.zig");
     _ = @import("core/calc.zig");
+    _ = @import("ui/theme.zig");
+    _ = @import("ui/glyphs.zig");
+    _ = @import("ui/tests_palette.zig");
 }

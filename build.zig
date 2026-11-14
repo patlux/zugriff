@@ -39,6 +39,26 @@ pub fn build(b: *std.Build) void {
     linkFrameworks(tests.root_module);
     const test_step = b.step("test", "Run the tests (offscreen, no window)");
     test_step.dependOn(&b.addRunArtifact(tests).step);
+
+    // The palette's states as pictures, rendered offscreen.
+    const shots = b.addExecutable(.{ .name = "shots", .root_module = b.createModule(.{
+        .root_source_file = b.path("src/shots.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "nanoui", .module = nanoui }},
+    }) });
+    shots.root_module.addOptions("build_options", options);
+    linkFrameworks(shots.root_module);
+    const shoot = b.addRunArtifact(shots);
+    shoot.has_side_effects = true;
+    const pictures = shoot.addOutputDirectoryArg2("shots", .{});
+    const install_shots = b.addInstallDirectory(.{
+        .source_dir = pictures,
+        .install_dir = .prefix,
+        .install_subdir = "shots",
+    });
+    b.step("shots", "Render the palette's states to zig-out/shots (offscreen)").dependOn(&install_shots.step);
 }
 
 /// Carbon for the hot keys and the secure-input check, ApplicationServices
