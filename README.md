@@ -43,8 +43,8 @@ Log und läuft ohne ihn weiter; dann Spotlight umstellen oder `--hotkey` nutzen.
 
 ```text
 zugriff-zig                    Palette starten (Cmd+Space, Ctrl+Cmd+Space)
-zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
-                               Palette mit eigenen Hotkeys starten
+zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>] [--unload-after <s|never>]
+                               Palette mit eigenen Hotkeys starten, optional entladen
 zugriff-zig show               Laufende Palette anzeigen
 zugriff-zig hide               Laufende Palette ausblenden
 zugriff-zig toggle             Laufende Palette umschalten
@@ -57,6 +57,30 @@ zugriff-zig icons              App-Icons in den Cache rendern (ohne UI)
 zugriff-zig calc <aufgabe>     Aufgabe rechnen wie in der Palette (ohne UI)
 zugriff-zig --version          Version
 ```
+
+## Speicher
+
+Standardmäßig hält der Agent die fertige Palette bereit (Fenster, Metal,
+Atlanten, Caches), damit der Hotkey sie innerhalb eines Frames zeigt. Mit
+`--unload-after <sekunden>` schließt er das versteckte Fenster nach dieser
+Ruhezeit und legt es beim nächsten Aufruf neu an. Das dauert etwa 8–30 ms plus
+den ersten Frame; Eingabe, letzte Rechnung und Emoji-Verlauf bleiben erhalten.
+
+```sh
+./zig-out/bin/zugriff-zig run --hotkey alt+space --unload-after 60
+```
+
+Gemessen mit `footprint` auf einem Retina-Mac (ReleaseSafe, macOS 27):
+
+| Zustand | bleibt geladen | `--unload-after` |
+|---|---|---|
+| gestartet, nie geöffnet | 24 MB | 23 MB |
+| offen (Apps / Emoji) | 47 / 66 MB | 47 / 66 MB |
+| versteckt nach Nutzung | 49–52 MB | 34–39 MB |
+
+Entladen gibt die GPU-Puffer und Atlanten ganz frei. Den Rest hält vor allem
+malloc: Nur etwa 9 MB davon sind noch belegt, die übrigen Seiten bleiben wegen
+verstreut belegter Blöcke beim Prozess.
 
 ## Neben der Rust-Version
 

@@ -17,8 +17,9 @@ pub const height: f64 = 420;
 pub fn options(
     view: nanoui.ui.View,
     theme: nanoui.ui.Theme,
-    key_ctx: *anyopaque,
+    ctx: *anyopaque,
     on_key: *const fn (ctx: *anyopaque, w: *nanoui.Window) void,
+    on_close: *const fn (ctx: *anyopaque, w: *nanoui.Window) void,
 ) nanoui.WindowOptions {
     return .{
         .title = "Zugriff",
@@ -30,7 +31,8 @@ pub fn options(
         .title_bar = .popover,
         .visible = false,
         .theme = theme,
-        .on_key = .{ .ctx = key_ctx, .func = on_key },
+        .on_key = .{ .ctx = ctx, .func = on_key },
+        .on_close = .{ .ctx = ctx, .func = on_close },
         .content = .{ .view = view },
     };
 }
@@ -75,16 +77,6 @@ pub fn configure(w: *nanoui.Window) void {
         objc.msg(void, win, "setAppearance:", .{dark});
     }
     installBackdrop(w);
-    limitPictures(w);
-}
-
-/// The picture atlas starts at 512² (1 MB) instead of nanoui's 2048²
-/// (16 MB); nanoui doubles it when one frame needs more, as the emoji grid
-/// does. Decoded copies beyond 4 MB are dropped; they come back on demand.
-fn limitPictures(w: *nanoui.Window) void {
-    const surface = w.surface orelse return;
-    surface.text.images.side = 512;
-    surface.text.images.limits.decoded_bytes = 4 * 1024 * 1024;
 }
 
 /// The system's blur behind the panel: an NSVisualEffectView under the

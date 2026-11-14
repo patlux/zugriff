@@ -15,6 +15,18 @@ const calc_view = @import("calc_view.zig");
 const emoji_view = @import("emoji_view.zig");
 const Glyphs = @import("glyphs.zig").Glyphs;
 
+/// The picture atlas starts at 512² (1 MB) instead of nanoui's 2048²
+/// (16 MB); nanoui doubles it when one frame needs more, as the emoji grid
+/// does. Set before the window's first picture is packed, also in a window
+/// made again after an unload. Decoded copies beyond 4 MB are dropped; they
+/// come back on demand.
+fn limitPictures(c: *ui.Context) void {
+    const im = &c.text.images;
+    if (im.generation != 0) return;
+    im.side = 512;
+    im.limits.decoded_bytes = 4 * 1024 * 1024;
+}
+
 /// Emoji pictures cached while the palette is open (16 KB each): at most
 /// `glyphs_max`, trimmed to `glyphs_kept`; `glyphs_kept_closed` stay while
 /// it is closed. A dropped one costs about 0,15 ms to draw again.
@@ -237,6 +249,11 @@ pub const Palette = struct {
         try p.refresh();
         p.selected = 0;
         p.reveal = .top;
+    }
+
+    /// The panel was closed to free memory; its window and caches go.
+    pub fn unloaded(p: *Palette) void {
+        p.glyphs.trim(0);
     }
 
     /// The panel is closing. A result on screen goes into the history.
@@ -625,6 +642,7 @@ pub const Palette = struct {
     fn build(p: *Palette, c: *ui.Context) !void {
         // Between frames: nanoui painted the last one, this one draws nothing yet.
         if (p.glyphs.count() > glyphs_max) p.glyphs.trim(glyphs_kept);
+        limitPictures(c);
         try p.keys(c);
         const root = ui.div(c).column().sizeFull().bg(theme.background);
         defer root.end();

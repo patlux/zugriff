@@ -15,8 +15,10 @@ const help =
     \\
     \\Befehle:
     \\  zugriff-zig                    Palette starten (Cmd+Space, Ctrl+Cmd+Space)
-    \\  zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
-    \\                                 Palette mit eigenen Hotkeys starten
+    \\  zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>] [--unload-after <s|never>]
+    \\                                 Palette mit eigenen Hotkeys starten; mit --unload-after
+    \\                                 wird sie nach so vielen Sekunden Ruhe entladen (weniger
+    \\                                 RAM, das nächste Öffnen dauert etwas länger)
     \\  zugriff-zig show               Laufende Palette anzeigen
     \\  zugriff-zig hide               Laufende Palette ausblenden
     \\  zugriff-zig toggle             Laufende Palette umschalten
@@ -54,6 +56,7 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("zugriff-zig: {s}\n", .{switch (e) {
                 error.MissingValue => "die Option braucht einen Wert",
                 error.UnknownOption => "unbekannte Option für `run`",
+                error.InvalidValue => "`--unload-after` erwartet Sekunden oder `never`",
             }});
             std.process.exit(1);
         };
@@ -87,8 +90,8 @@ pub fn main(init: std.process.Init) !void {
     std.process.exit(1);
 }
 
-fn parseRun(args: []const []const u8) error{ MissingValue, UnknownOption }!agent.Hotkeys {
-    var keys: agent.Hotkeys = .{};
+fn parseRun(args: []const []const u8) error{ MissingValue, UnknownOption, InvalidValue }!agent.Settings {
+    var keys: agent.Settings = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -100,6 +103,13 @@ fn parseRun(args: []const []const u8) error{ MissingValue, UnknownOption }!agent
             i += 1;
             if (i >= args.len) return error.MissingValue;
             keys.emoji = if (std.mem.eql(u8, args[i], "none")) null else args[i];
+        } else if (std.mem.eql(u8, arg, "--unload-after")) {
+            i += 1;
+            if (i >= args.len) return error.MissingValue;
+            keys.unload_after_s = if (std.mem.eql(u8, args[i], "never"))
+                null
+            else
+                std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidValue;
         } else return error.UnknownOption;
     }
     return keys;
@@ -190,4 +200,12 @@ test "run takes its hot keys" {
     try std.testing.expect(keys.emoji == null);
     try std.testing.expectError(error.MissingValue, parseRun(&.{"--hotkey"}));
     try std.testing.expectError(error.UnknownOption, parseRun(&.{"--fast"}));
+}
+
+test "run takes how long the hidden palette stays loaded" {
+    try std.testing.expect((try parseRun(&.{})).unload_after_s == null);
+    try std.testing.expectEqual(@as(?u32, 90), (try parseRun(&.{ "--unload-after", "90" })).unload_after_s);
+    try std.testing.expect((try parseRun(&.{ "--unload-after", "never" })).unload_after_s == null);
+    try std.testing.expectError(error.InvalidValue, parseRun(&.{ "--unload-after", "bald" }));
+    try std.testing.expectError(error.MissingValue, parseRun(&.{"--unload-after"}));
 }

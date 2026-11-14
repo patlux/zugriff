@@ -15,6 +15,9 @@ The palette opens before any content work; this is not negotiable.
   background catalog arrives, the current query is applied.
 - A show only places and orders the pre-created panel. It never waits for a scan, a search,
   icon rendering or a fresh catalog.
+- The one exception is opt-in: with `run --unload-after <s>` the hidden panel is closed after
+  that long, and the next show makes it again (about 8–30 ms plus the first frame). The default
+  (`never`) keeps the panel; do not change the default or unload without the option.
 - Keep the non-activating panel: the app in front keeps its focus while the palette is open.
 
 ## Zig

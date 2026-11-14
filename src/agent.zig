@@ -3,7 +3,8 @@
 //!
 //! Opening contract (AGENTS.md): panel and hot keys first; content work
 //! starts only after the palette can open. Do not move app discovery into
-//! the start path.
+//! the start path. With `--unload-after` the panel is closed after that
+//! long unused and made again by the next show; that is opt-in.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const nanoui = @import("nanoui");
@@ -26,10 +27,13 @@ const InsertSupport = ui_palette.InsertSupport;
 
 const log = std.log.scoped(.zugriff);
 
-pub const Hotkeys = struct {
+pub const Settings = struct {
     palette: []const u8 = "cmd+space",
     /// The macOS character viewer's shortcut; null: no emoji hot key.
     emoji: ?[]const u8 = "ctrl+cmd+space",
+    /// Seconds the hidden panel stays before it is closed to free its
+    /// memory; null: it stays (the next show is then a single frame).
+    unload_after_s: ?u32 = null,
 };
 
 /// After the panel is ordered out, the app in front needs a moment to get
@@ -62,7 +66,11 @@ pub const Agent = struct {
     io: std.Io,
     home: ?[]const u8,
     app: *nanoui.App,
-    window: *nanoui.Window = undefined,
+    settings: Settings = .{},
+    /// The panel; null while unloaded (`--unload-after`).
+    window: ?*nanoui.Window = null,
+    /// When the hidden panel may be closed (`nowMs`).
+    unload_due_ms: i64 = 0,
     palette: Palette = undefined,
     visible: bool = false,
     /// The first show wants the icons that are not cached yet.
@@ -85,7 +93,7 @@ pub const Agent = struct {
     server: ?control.Server = null,
     staged: ?insert.Staged = null,
 
-    pub fn run(gpa: Allocator, io: std.Io, home: ?[]const u8, init: std.process.Init, keys: Hotkeys) !void {
+    pub fn run(gpa: Allocator, io: std.Io, home: ?[]const u8, init: std.process.Init, settings: Settings) !void {
         const socket = try control.socketPath(init.arena.allocator(), home);
         if (control.isRunning(io, socket)) {
             _ = control.request(init.arena.allocator(), io, socket, "show") catch |e| log.warn("show: {t}", .{e});
@@ -100,7 +108,7 @@ pub const Agent = struct {
         defer app.destroy();
         const agent = try gpa.create(Agent);
         defer gpa.destroy(agent);
-        agent.* = .{ .gpa = gpa, .io = io, .home = home, .app = app };
+        agent.* = .{ .gpa = gpa, .io = io, .home = home, .app = app, .settings = settings };
         agent.palette = .init(
             gpa,
             io,
@@ -111,16 +119,11 @@ pub const Agent = struct {
         defer agent.shutdown();
 
         // Window and hot keys first.
-        agent.window = try app.newWindow(panel.options(
-            .init(&agent.palette, Palette.view),
-            theme.window,
-            agent,
-            keyChanged,
-        ));
-        panel.configure(agent.window);
+        _ = try agent.openWindow();
         log.info("panel configured", .{});
+        agent.scheduleUnload();
         if (!app.flags.hidden) {
-            agent.registerHotkeys(keys);
+            agent.registerHotkeys(settings);
             agent.server = try control.Server.bind(
                 io,
                 socket,
@@ -164,7 +167,55 @@ pub const Agent = struct {
         a.deferred.deinit(a.gpa);
     }
 
-    fn registerHotkeys(a: *Agent, keys: Hotkeys) void {
+    /// The panel, made if it was unloaded.
+    fn openWindow(a: *Agent) !*nanoui.Window {
+        if (a.window) |w| return w;
+        const w = try a.app.newWindow(panel.options(
+            .init(&a.palette, Palette.view),
+            theme.window,
+            a,
+            keyChanged,
+            windowClosed,
+        ));
+        panel.configure(w);
+        a.window = w;
+        return w;
+    }
+
+    /// nanoui frees the window after this; the next show makes a new one.
+    fn windowClosed(ctx: *anyopaque, w: *nanoui.Window) void {
+        const a: *Agent = @ptrCast(@alignCast(ctx));
+        if (a.window == w) a.window = null;
+    }
+
+    fn redraw(a: *Agent) void {
+        if (a.window) |w| w.redraw();
+    }
+
+    fn focused(a: *Agent) bool {
+        const w = a.window orelse return false;
+        return a.visible and w.isFocused();
+    }
+
+    /// With `--unload-after`: closes the panel once it has stayed hidden
+    /// that long. A show in between moves the moment on.
+    fn scheduleUnload(a: *Agent) void {
+        const s = a.settings.unload_after_s orelse return;
+        const ms = @as(u64, s) * std.time.ms_per_s;
+        a.unload_due_ms = nowMs(a) + @as(i64, @intCast(ms));
+        nanoui.App.after(ms, a, unloadIfIdle);
+    }
+
+    fn unloadIfIdle(ctx: ?*anyopaque) callconv(.c) void {
+        const a: *Agent = @ptrCast(@alignCast(ctx.?));
+        if (a.visible or nowMs(a) < a.unload_due_ms) return;
+        const w = a.window orelse return;
+        a.palette.unloaded();
+        w.close();
+        log.info("Palette entladen; der nächste Aufruf legt sie neu an", .{});
+    }
+
+    fn registerHotkeys(a: *Agent, keys: Settings) void {
         const bindings = [_]struct { ?[]const u8, *const fn (*anyopaque) void }{
             .{ keys.palette, togglePressed },
             .{ keys.emoji, emojiPressed },
@@ -226,8 +277,8 @@ pub const Agent = struct {
         switch (c) {
             .show => a.show(.apps),
             .hide => a.hide(),
-            .toggle => if (a.visible and a.window.isFocused()) a.hide() else a.show(.apps),
-            .emoji => if (a.visible and a.window.isFocused() and a.palette.showingEmoji()) a.hide() else a.show(.emoji),
+            .toggle => if (a.focused()) a.hide() else a.show(.apps),
+            .emoji => if (a.focused() and a.palette.showingEmoji()) a.hide() else a.show(.emoji),
             .quit => a.app.quit(),
         }
     }
@@ -242,7 +293,11 @@ pub const Agent = struct {
             .emoji => a.palette.showEmoji(),
         };
         ready catch |e| log.err("Palette nicht bereit: {t}", .{e});
-        panel.show(a.window);
+        const made = a.window == null;
+        const start_us = nowUs();
+        const w = a.openWindow() catch |e| return log.err("Palette lässt sich nicht anlegen: {t}", .{e});
+        if (made) log.info("Palette neu angelegt in {d} µs", .{nowUs() - start_us});
+        panel.show(w);
         a.visible = true;
         // The icons the palette shows are wanted now; later shows have them.
         if (!a.icons_wanted) {
@@ -259,7 +314,7 @@ pub const Agent = struct {
         else
             .ready;
         a.palette.setInsertSupport(support);
-        a.window.redraw();
+        w.redraw();
     }
 
     fn hide(a: *Agent) void {
@@ -267,7 +322,8 @@ pub const Agent = struct {
         // not keep the last calculation alive.
         if (a.visible) a.palette.closed(nowMs(a)) catch |e| log.warn("Schließen: {t}", .{e});
         a.visible = false;
-        panel.hide(a.window);
+        if (a.window) |w| panel.hide(w);
+        a.scheduleUnload();
     }
 
     /// The panel became or stopped being the key window. nanoui hides the
@@ -278,6 +334,7 @@ pub const Agent = struct {
         a.palette.closed(nowMs(a)) catch |e| log.warn("Schließen: {t}", .{e});
         a.visible = false;
         panel.release(w);
+        a.scheduleUnload();
     }
 
     // The palette's events, done after the frame that emitted them.
@@ -421,7 +478,7 @@ pub const Agent = struct {
         // A resident agent that never opens the palette does not pay for the
         // icons; once it opened, new apps get theirs at once.
         if (a.icons_wanted) a.queuePendingIcons();
-        a.window.redraw();
+        a.redraw();
     }
 
     /// Looks again for icons the scan reported missing: they may have been
@@ -475,7 +532,7 @@ pub const Agent = struct {
             };
             any = (a.palette.setIcon(path, icon) catch false) or any;
         }
-        if (any) a.window.redraw();
+        if (any) a.redraw();
         if (a.icon_queue.items.len > 0) {
             nanoui.App.after(icon_batch_pause_ms, a, iconBatch);
         } else {
@@ -495,7 +552,7 @@ pub const Agent = struct {
         const a: *Agent = @ptrCast(@alignCast(ctx.?));
         const prefs = a.prefs_loaded orelse return;
         a.palette.setEmojiPrefs(prefs) catch |e| log.warn("Emoji-Einstellungen: {t}", .{e});
-        a.window.redraw();
+        a.redraw();
     }
 
     // The palette's host.
