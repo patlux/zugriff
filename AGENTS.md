@@ -46,7 +46,8 @@ The palette opens before any content work; this is not negotiable.
 - The version is the `.version` line of `build.zig.zon`. Only `make version` changes it, on a clean
   `main` and only when a release is asked for; commit that as `version bump to vX.Y.Z`.
 - No push, tag or hosted release without an explicit request.
-- There is no install target yet.
+- `make install` builds a clean tree, signs it, copies it to `~/.local/share/zugriff/bin/zugriff`
+  and restarts the launch agent; run it only when an install is asked for.
 
 ## Checks
 
@@ -60,7 +61,7 @@ The palette opens before any content work; this is not negotiable.
 - The real agent (`zig build run`, `zig-out/bin/zugriff-zig`) takes the global hot keys, shows a
   panel over everything and can post `⌘V` to other apps. Run it only on a separate test Mac,
   never on the developer's Mac, and with its own `HOME` so it
-  does not meet an installed Rust agent's socket and preferences.
+  does not meet an installed agent's socket and preferences.
 - On the test Mac, drive it with `zugriff-zig show|emoji|hide|quit` over SSH. The palette closes when
   it loses key status (by design). Accessibility value writes do not reach nanoui's text field.
 

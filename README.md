@@ -110,7 +110,19 @@ Beide Versionen teilen sich ihre Dateien:
 Läuft der Rust-Agent, sieht `zugriff-zig` dessen Socket und zeigt nur dessen
 Palette an. Zum Ausprobieren den Rust-Agent beenden oder die Zig-Version mit
 eigenem `HOME` starten. In der Prozessliste heißt die Zig-Version `zugriff-zig`,
-die Rust-Version `zugriff`. Es gibt noch kein Install-Target und keinen LaunchAgent.
+die Rust-Version `zugriff`.
+
+## Installieren
+
+```sh
+make install
+```
+
+baut einen sauberen Stand in ReleaseSafe, signiert ihn mit Identität und
+Kennung der Rust-Version (die Bedienungshilfen-Erlaubnis bleibt), legt ihn als
+`~/.local/share/zugriff/bin/zugriff-zig` ab und startet den LaunchAgent
+`local.zugriff` neu. Den LaunchAgent legt das Maschinen-Setup an; er
+startet die Palette mit `--unload-after 60 --unload-mode process`.
 
 ## Unterschiede
 
