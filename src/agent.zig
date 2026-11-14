@@ -381,6 +381,15 @@ pub const Agent = struct {
             .emoji => a.palette.showEmoji(),
         };
         ready catch |e| log.err("Palette nicht bereit: {t}", .{e});
+        // `:` opens the emoji picker from the app search too, so every show asks.
+        // Before the panel draws: its first frame shows the right note.
+        const support: InsertSupport = if (!insert.isTrusted())
+            .needs_permission
+        else if (insert.secureInputActive())
+            .secure_input
+        else
+            .ready;
+        a.palette.setInsertSupport(support);
         const made = a.window == null;
         const start_us = nowUs();
         const w = a.openWindow() catch |e| return log.err("Palette lässt sich nicht anlegen: {t}", .{e});
@@ -397,14 +406,6 @@ pub const Agent = struct {
         }
         // The list on screen stays until the scan answers; typing never waits.
         a.requestScan();
-        // `:` opens the emoji picker from the app search too, so every show asks.
-        const support: InsertSupport = if (!insert.isTrusted())
-            .needs_permission
-        else if (insert.secureInputActive())
-            .secure_input
-        else
-            .ready;
-        a.palette.setInsertSupport(support);
         w.redraw();
     }
 

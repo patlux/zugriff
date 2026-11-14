@@ -108,13 +108,45 @@ fn roundContent(win: objc.Object) void {
     objc.msg(void, win, "invalidateShadow", .{});
 }
 
-/// Centres the panel on the screen with the pointer and makes it the key
-/// window without activating the app.
+/// Centres the panel on the screen with the pointer, draws the palette's
+/// current state into it and makes it the key window without activating
+/// the app.
 pub fn show(w: *nanoui.Window) void {
     const pool = objc.Pool.push();
     defer pool.pop();
     centerOnPointerScreen(w.nswindow);
+    drawBeforeShow(w);
     w.show();
+}
+
+/// A hidden panel still holds the frame it showed last (the emoji grid
+/// after the emoji picker), and nanoui draws the next one only at the
+/// display link's tick after the panel is on screen, so the old frame
+/// flashes up first. This draws the current state while the panel is
+/// still hidden, in the window's transaction, so it comes on screen
+/// together with the panel.
+///
+/// nanoui 0.14.4 draws in the transaction only for a live-resize step
+/// (`Surface.resizeInTransaction`), which needs a visible surface and no
+/// display link (a layer with a link refuses `nextDrawable`). So the link
+/// is dropped for this one frame and the surface counts as visible while
+/// it draws; afterwards nanoui's occlusion check takes over again.
+fn drawBeforeShow(w: *nanoui.Window) void {
+    const s = w.surface orelse return;
+    if (w.isVisible() or s.in_frame or s.dead) return;
+    // `release` shrank the drawables; `Surface.visible` sizes them again
+    // only when it finds the window on screen.
+    if (s.released) {
+        s.released = false;
+        s.renderer.resize(s.size, s.scale);
+    }
+    const had_link = s.display_link != null;
+    s.stopLink();
+    s.is_visible = true;
+    const drawn = s.resizeInTransaction();
+    s.is_visible = false;
+    if (had_link) s.startLink();
+    if (!drawn) std.log.warn("Palette vor dem Zeigen nicht gezeichnet; der Display-Link zeichnet sie", .{});
 }
 
 pub fn hide(w: *nanoui.Window) void {
