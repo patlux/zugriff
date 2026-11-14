@@ -87,7 +87,9 @@ pub const Catalog = struct {
         for (c.items, 0..) |it, i| {
             if (try m.score(it, query)) |s| try hits.append(gpa, .{ .index = i, .score = s });
         }
-        std.mem.sort(SearchHit, hits.items, c, lessThan);
+        // The index breaks every tie, so the order is total and the unstable
+        // sort gives the same result as a stable one, with less code.
+        std.mem.sortUnstable(SearchHit, hits.items, c, lessThan);
         return hits.toOwnedSlice(gpa);
     }
 

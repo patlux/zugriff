@@ -277,6 +277,7 @@ pub const Agent = struct {
         if (w.isFocused() or !a.visible) return;
         a.palette.closed(nowMs(a)) catch |e| log.warn("Schließen: {t}", .{e});
         a.visible = false;
+        panel.release(w);
     }
 
     // The palette's events, done after the frame that emitted them.

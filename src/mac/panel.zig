@@ -75,6 +75,16 @@ pub fn configure(w: *nanoui.Window) void {
         objc.msg(void, win, "setAppearance:", .{dark});
     }
     installBackdrop(w);
+    limitPictures(w);
+}
+
+/// The picture atlas starts at 512² (1 MB) instead of nanoui's 2048²
+/// (16 MB); nanoui doubles it when one frame needs more, as the emoji grid
+/// does. Decoded copies beyond 4 MB are dropped; they come back on demand.
+fn limitPictures(w: *nanoui.Window) void {
+    const surface = w.surface orelse return;
+    surface.text.images.side = 512;
+    surface.text.images.limits.decoded_bytes = 4 * 1024 * 1024;
 }
 
 /// The system's blur behind the panel: an NSVisualEffectView under the
@@ -102,6 +112,19 @@ pub fn show(w: *nanoui.Window) void {
 
 pub fn hide(w: *nanoui.Window) void {
     w.hide();
+    release(w);
+}
+
+/// Lets go of what a hidden panel does not need: the drawables (five of
+/// 4 MB at 640×420 on a Retina screen) and the decoded pictures. nanoui
+/// 0.14.4 does this when the window stops being visible, but `Window.hide`
+/// marks the surface hidden first, so that path never runs; this runs it as
+/// a change from visible. The next show sizes the drawables again.
+pub fn release(w: *nanoui.Window) void {
+    const surface = w.surface orelse return;
+    if (surface.released or w.isVisible()) return;
+    surface.is_visible = true;
+    surface.occlusionChanged();
 }
 
 fn centerOnPointerScreen(win: objc.Object) void {

@@ -229,7 +229,9 @@ pub fn search(gpa: std.mem.Allocator, query: []const u8, recent: []const []const
         } else true;
         if (matched) try hits.append(gpa, .{ .index = i, .score = total, .recency = recency(e, recent) });
     }
-    std.mem.sort(Hit, hits.items, {}, struct {
+    // The index breaks every tie, so the order is total and the unstable
+    // sort gives the same result as a stable one, with less code.
+    std.mem.sortUnstable(Hit, hits.items, {}, struct {
         fn lt(_: void, a: Hit, b: Hit) bool {
             if (a.score != b.score) return a.score > b.score;
             if (a.recency != b.recency) return a.recency < b.recency;
