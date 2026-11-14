@@ -4,7 +4,9 @@
 //! Opening contract (AGENTS.md): panel and hot keys first; content work
 //! starts only after the palette can open. Do not move app discovery into
 //! the start path. With `--unload-after` the panel is closed after that
-//! long unused and made again by the next show; that is opt-in.
+//! long unused and made again by the next show; that is opt-in. With
+//! `--unload-mode process` this agent is the UI process `daemon.zig`
+//! starts: no hot keys, a private socket, and it ends instead.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const nanoui = @import("nanoui");
@@ -34,7 +36,17 @@ pub const Settings = struct {
     /// Seconds the hidden panel stays before it is closed to free its
     /// memory; null: it stays (the next show is then a single frame).
     unload_after_s: ?u32 = null,
+    /// What goes after `unload_after_s`: the window, or the whole UI
+    /// process (a small daemon keeps the hot keys, `daemon.zig`).
+    unload_mode: UnloadMode = .window,
+    /// The UI process's own: its private socket instead of the public one,
+    /// no hot keys (the daemon has them) and the command it was started for.
+    socket: ?[]const u8 = null,
+    hotkeys: bool = true,
+    then: ?control.Command = null,
 };
+
+pub const UnloadMode = enum { window, process };
 
 /// After the panel is ordered out, the app in front needs a moment to get
 /// the keyboard back before `⌘V` arrives.
@@ -94,7 +106,7 @@ pub const Agent = struct {
     staged: ?insert.Staged = null,
 
     pub fn run(gpa: Allocator, io: std.Io, home: ?[]const u8, init: std.process.Init, settings: Settings) !void {
-        const socket = try control.socketPath(init.arena.allocator(), home);
+        const socket = settings.socket orelse try control.socketPath(init.arena.allocator(), home);
         if (control.isRunning(io, socket)) {
             _ = control.request(init.arena.allocator(), io, socket, "show") catch |e| log.warn("show: {t}", .{e});
             std.debug.print("Zugriff läuft bereits; Palette wird angezeigt.\n", .{});
@@ -123,7 +135,7 @@ pub const Agent = struct {
         log.info("panel configured", .{});
         agent.scheduleUnload();
         if (!app.flags.hidden) {
-            agent.registerHotkeys(settings);
+            if (settings.hotkeys) registerHotkeys(settings, agent, togglePressed, emojiPressed);
             agent.server = try control.Server.bind(
                 io,
                 socket,
@@ -131,6 +143,8 @@ pub const Agent = struct {
             );
             try agent.server.?.spawn();
         }
+        // The command the daemon started this UI process for, once it runs.
+        if (settings.then != null) nanoui.App.after(0, agent, runThen);
 
         // Content next, off the main thread.
         agent.scanner = .{ .ctx = agent, .scan = scan, .deliver = delivered };
@@ -209,29 +223,19 @@ pub const Agent = struct {
     fn unloadIfIdle(ctx: ?*anyopaque) callconv(.c) void {
         const a: *Agent = @ptrCast(@alignCast(ctx.?));
         if (a.visible or nowMs(a) < a.unload_due_ms) return;
+        if (a.settings.unload_mode == .process) {
+            log.info("UI-Prozess beendet sich; der nächste Aufruf startet ihn neu", .{});
+            return a.app.quit();
+        }
         const w = a.window orelse return;
         a.palette.unloaded();
         w.close();
         log.info("Palette entladen; der nächste Aufruf legt sie neu an", .{});
     }
 
-    fn registerHotkeys(a: *Agent, keys: Settings) void {
-        const bindings = [_]struct { ?[]const u8, *const fn (*anyopaque) void }{
-            .{ keys.palette, togglePressed },
-            .{ keys.emoji, emojiPressed },
-        };
-        for (bindings) |b| {
-            const spec_text = b[0] orelse continue;
-            const spec = hotkey.parse(spec_text) catch {
-                log.err("ungültiger Hotkey {s}", .{spec_text});
-                continue;
-            };
-            hotkey.register(spec, .{ .ctx = a, .func = b[1] }) catch |e| {
-                log.err("globaler Hotkey {s} konnte nicht registriert werden: {t}", .{ spec_text, e });
-                continue;
-            };
-            log.info("global hotkey registered: {s}", .{spec_text});
-        }
+    fn runThen(ctx: ?*anyopaque) callconv(.c) void {
+        const a: *Agent = @ptrCast(@alignCast(ctx.?));
+        a.handle(a.settings.then orelse return);
     }
 
     fn togglePressed(ctx: *anyopaque) void {
@@ -565,6 +569,32 @@ pub const Agent = struct {
         nanoui.shell.beep();
     }
 };
+
+/// The palette and emoji hot keys of `keys`, calling `on_palette` and
+/// `on_emoji` with `ctx`; the agent's and the daemon's.
+pub fn registerHotkeys(
+    keys: Settings,
+    ctx: *anyopaque,
+    on_palette: *const fn (*anyopaque) void,
+    on_emoji: *const fn (*anyopaque) void,
+) void {
+    const bindings = [_]struct { ?[]const u8, *const fn (*anyopaque) void }{
+        .{ keys.palette, on_palette },
+        .{ keys.emoji, on_emoji },
+    };
+    for (bindings) |b| {
+        const spec_text = b[0] orelse continue;
+        const spec = hotkey.parse(spec_text) catch {
+            log.err("ungültiger Hotkey {s}", .{spec_text});
+            continue;
+        };
+        hotkey.register(spec, .{ .ctx = ctx, .func = b[1] }) catch |e| {
+            log.err("globaler Hotkey {s} konnte nicht registriert werden: {t}", .{ spec_text, e });
+            continue;
+        };
+        log.info("global hotkey registered: {s}", .{spec_text});
+    }
+}
 
 pub fn nowMs(_: *anyopaque) i64 {
     var ts: std.c.timespec = undefined;

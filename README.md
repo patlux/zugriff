@@ -43,7 +43,8 @@ Log und läuft ohne ihn weiter; dann Spotlight umstellen oder `--hotkey` nutzen.
 
 ```text
 zugriff-zig                    Palette starten (Cmd+Space, Ctrl+Cmd+Space)
-zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>] [--unload-after <s|never>]
+zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
+                [--unload-after <s|never>] [--unload-mode window|process]
                                Palette mit eigenen Hotkeys starten, optional entladen
 zugriff-zig show               Laufende Palette anzeigen
 zugriff-zig hide               Laufende Palette ausblenden
@@ -61,26 +62,39 @@ zugriff-zig --version          Version
 ## Speicher
 
 Standardmäßig hält der Agent die fertige Palette bereit (Fenster, Metal,
-Atlanten, Caches), damit der Hotkey sie innerhalb eines Frames zeigt. Mit
-`--unload-after <sekunden>` schließt er das versteckte Fenster nach dieser
-Ruhezeit und legt es beim nächsten Aufruf neu an. Das dauert etwa 8–30 ms plus
-den ersten Frame; Eingabe, letzte Rechnung und Emoji-Verlauf bleiben erhalten.
+Atlanten, Caches), damit der Hotkey sie innerhalb eines Frames zeigt.
+`--unload-after <sekunden>` gibt nach dieser Ruhezeit Speicher frei, auf eine
+von zwei Arten (`--unload-mode`):
+
+- `window` (Standard): Das versteckte Fenster wird geschlossen und beim
+  nächsten Aufruf neu angelegt. Eingabe, letzte Rechnung und Emoji-Verlauf
+  bleiben erhalten.
+- `process`: Ein kleiner Daemon (`src/daemon.zig`) hält Hotkeys und Socket
+  und startet die Palette als eigenen UI-Prozess (`zugriff-zig ui`, intern).
+  Der UI-Prozess beendet sich nach der Ruhezeit ganz; die letzte Rechnung
+  geht dabei verloren, der Emoji-Verlauf liegt in der Datei und bleibt.
 
 ```sh
 ./zig-out/bin/zugriff-zig run --hotkey alt+space --unload-after 60
+./zig-out/bin/zugriff-zig run --hotkey alt+space --unload-after 60 --unload-mode process
 ```
 
-Gemessen mit `footprint` auf einem Retina-Mac (ReleaseSafe, macOS 27):
+Gemessen auf einem Retina-Mac (ReleaseSafe, macOS 27). Speicher mit
+`footprint`; Öffnen ist die Zeit von `show` bis die Palette laut
+Fensterliste sichtbar ist, mit einem Messsockel von etwa 40–50 ms (CLI,
+Socket, Abfragetakt), der in allen Spalten steckt:
 
-| Zustand | bleibt geladen | `--unload-after` |
-|---|---|---|
-| gestartet, nie geöffnet | 24 MB | 23 MB |
-| offen (Apps / Emoji) | 47 / 66 MB | 47 / 66 MB |
-| versteckt nach Nutzung | 49–52 MB | 34–39 MB |
+| | bleibt geladen | `window` | `process` |
+|---|---|---|---|
+| Ruhe, nie geöffnet | 24 MB | 23 MB | 9 MB (Daemon) |
+| offen (Apps / Emoji) | 47 / 66 MB | 47 / 66 MB | 9 MB + 59 / 66 MB |
+| Ruhe nach Nutzung | 49–52 MB | 34–39 MB | 9 MB |
+| Öffnen aus der Ruhe | ~60 ms | ~100 ms | ~210 ms |
 
-Entladen gibt die GPU-Puffer und Atlanten ganz frei. Den Rest hält vor allem
-malloc: Nur etwa 9 MB davon sind noch belegt, die übrigen Seiten bleiben wegen
-verstreut belegter Blöcke beim Prozess.
+`window` gibt GPU-Puffer und Atlanten ganz frei; den Rest hält malloc (nur
+etwa 9 MB davon sind noch belegt, die übrigen Seiten bleiben wegen verstreut
+belegter Blöcke beim Prozess). `process` gibt alles frei, kostet beim
+Öffnen aber den Start des UI-Prozesses mit AppKit und Metal.
 
 ## Neben der Rust-Version
 
@@ -134,6 +148,7 @@ src/core/        Suche, Katalog, Emoji-Tabelle und Rechner, ohne Plattformcode
 src/mac/         Apps finden, Icons, Starten, Hotkeys, Panel, Einfügen (AppKit/Carbon)
 src/ui/          Palette, Rechner- und Emoji-Ansicht auf nanoui, Theme, Emoji-Bilder
 src/agent.zig    Residenter Agent: Fenster und Hotkeys zuerst, dann Inhalte im Hintergrund
+src/daemon.zig   Daemon für --unload-mode process: Hotkeys und Socket, startet den UI-Prozess
 src/control.zig  Unix-Socket für show, hide, toggle, emoji, status und quit
 src/main.zig     Befehlszeile
 src/shots.zig    Offscreen-Screenshots für `zig build shots`

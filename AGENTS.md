@@ -16,8 +16,11 @@ The palette opens before any content work; this is not negotiable.
 - A show only places and orders the pre-created panel. It never waits for a scan, a search,
   icon rendering or a fresh catalog.
 - The one exception is opt-in: with `run --unload-after <s>` the hidden panel is closed after
-  that long, and the next show makes it again (about 8–30 ms plus the first frame). The default
-  (`never`) keeps the panel; do not change the default or unload without the option.
+  that long and the next show makes it again (about 40 ms more), or with `--unload-mode process`
+  a daemon (`src/daemon.zig`) keeps only the hot keys and the socket and starts the palette as
+  a UI process that ends itself (about 150 ms more). The default (`never`) keeps the panel; do
+  not change the default or unload without the option. The UI process registers no hot keys and
+  listens on its own `ui.sock`; only the daemon owns the public socket.
 - Keep the non-activating panel: the app in front keeps its focus while the palette is open.
 
 ## Zig

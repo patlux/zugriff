@@ -1,0 +1,174 @@
+//! `run --unload-after <s> --unload-mode process`: a small resident daemon
+//! with the hot keys and the public control socket, and no window. The
+//! palette runs in a UI process (`zugriff-zig ui`, the agent in `agent.zig`)
+//! the daemon starts on the first show; that process ends itself after the
+//! idle time, so between uses only the daemon stays in memory. A show then
+//! waits for the UI process to start (about 100 ms).
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const nanoui = @import("nanoui");
+const build_options = @import("build_options");
+const control = @import("control.zig");
+const sync = @import("sync.zig");
+const agent = @import("agent.zig");
+
+const log = std.log.scoped(.zugriff);
+
+pub const Daemon = struct {
+    gpa: Allocator,
+    io: std.Io,
+    app: *nanoui.App,
+    settings: agent.Settings,
+    /// This binary, started again as the UI process.
+    exe: []const u8,
+    /// The UI process's private socket, next to the public one.
+    ui_socket: []const u8,
+    child: ?std.process.Child = null,
+    server: ?control.Server = null,
+    commands_mutex: sync.Mutex = .{},
+    commands: std.ArrayList(control.Command) = .empty,
+
+    pub fn run(gpa: Allocator, io: std.Io, home: ?[]const u8, init: std.process.Init, settings: agent.Settings) !void {
+        const arena = init.arena.allocator();
+        const socket = try control.socketPath(arena, home);
+        if (control.isRunning(io, socket)) {
+            _ = control.request(arena, io, socket, "show") catch |e| log.warn("show: {t}", .{e});
+            std.debug.print("Zugriff läuft bereits; Palette wird angezeigt.\n", .{});
+            return;
+        }
+        var exe_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const exe_len = try std.process.executablePath(io, &exe_buf);
+
+        const app = try nanoui.App.create(
+            init,
+            .{ .name = "Zugriff", .quit_on_last_window_closed = false, .activation = .accessory },
+        );
+        defer app.destroy();
+        const d = try gpa.create(Daemon);
+        defer gpa.destroy(d);
+        d.* = .{
+            .gpa = gpa,
+            .io = io,
+            .app = app,
+            .settings = settings,
+            .exe = try arena.dupe(u8, exe_buf[0..exe_len]),
+            .ui_socket = try uiSocketPath(arena, socket),
+        };
+        defer d.shutdown();
+
+        agent.registerHotkeys(settings, d, palettePressed, emojiPressed);
+        d.server = try control.Server.bind(io, socket, .{ .ctx = d, .command = commandFromSocket, .status = status });
+        try d.server.?.spawn();
+        log.info("Daemon bereit; die Palette startet beim ersten Aufruf", .{});
+        try app.run();
+        log.info("Zugriff beendet", .{});
+    }
+
+    fn shutdown(d: *Daemon) void {
+        if (d.childRunning()) d.forward(.quit) catch |e| log.warn("UI-Prozess nicht beendet: {t}", .{e});
+        if (d.server) |*s| s.unlink();
+        d.commands.deinit(d.gpa);
+    }
+
+    fn palettePressed(ctx: *anyopaque) void {
+        const d: *Daemon = @ptrCast(@alignCast(ctx));
+        d.handle(.toggle);
+    }
+
+    fn emojiPressed(ctx: *anyopaque) void {
+        const d: *Daemon = @ptrCast(@alignCast(ctx));
+        d.handle(.emoji);
+    }
+
+    /// From the socket's thread: queued for the main thread.
+    fn commandFromSocket(ctx: *anyopaque, c: control.Command) void {
+        const d: *Daemon = @ptrCast(@alignCast(ctx));
+        d.commands_mutex.lock();
+        d.commands.append(d.gpa, c) catch |e| log.warn("Befehl {t} verworfen: {t}", .{ c, e });
+        d.commands_mutex.unlock();
+        _ = nanoui.App.onMain(d, drainCommands);
+    }
+
+    fn drainCommands(ctx: ?*anyopaque) callconv(.c) void {
+        const d: *Daemon = @ptrCast(@alignCast(ctx.?));
+        while (true) {
+            d.commands_mutex.lock();
+            const next = if (d.commands.items.len > 0) d.commands.orderedRemove(0) else null;
+            d.commands_mutex.unlock();
+            d.handle(next orelse return);
+        }
+    }
+
+    /// The daemon's line, then the UI process's when it runs.
+    fn status(ctx: *anyopaque, buf: []u8) []const u8 {
+        const d: *Daemon = @ptrCast(@alignCast(ctx));
+        var answer_buf: [512]u8 = undefined;
+        var fba: std.heap.FixedBufferAllocator = .init(&answer_buf);
+        const ui = control.request(fba.allocator(), d.io, d.ui_socket, "status") catch "UI-Prozess nicht geladen";
+        return std.mem.print(buf, "Zugriff {s} Daemon (pid {d}); {s}", .{
+            build_options.version,
+            std.c.getpid(),
+            ui,
+        }) catch "Zugriff";
+    }
+
+    fn handle(d: *Daemon, c: control.Command) void {
+        log.debug("command {t}", .{c});
+        switch (c) {
+            .quit => d.app.quit(),
+            .hide => if (d.childRunning()) d.forward(.hide) catch |e| log.debug("hide: {t}", .{e}),
+            .show, .toggle, .emoji => {
+                if (d.forward(c)) |_| return else |_| {}
+                // Started a moment ago and not listening yet: this press goes.
+                if (d.childRunning()) return log.info("UI-Prozess startet noch; {t} übergangen", .{c});
+                // Nothing on screen: a toggle shows.
+                d.spawn(if (c == .toggle) .show else c);
+            },
+        }
+    }
+
+    fn forward(d: *Daemon, c: control.Command) !void {
+        var buf: [512]u8 = undefined;
+        var fba: std.heap.FixedBufferAllocator = .init(&buf);
+        _ = try control.request(fba.allocator(), d.io, d.ui_socket, @tagName(c));
+    }
+
+    /// Whether the UI process lives; collects it once it has ended.
+    fn childRunning(d: *Daemon) bool {
+        const child = d.child orelse return false;
+        const pid = child.id orelse {
+            d.child = null;
+            return false;
+        };
+        var st: c_int = 0;
+        if (std.c.waitpid(pid, &st, std.c.W.NOHANG) == 0) return true;
+        d.child = null;
+        return false;
+    }
+
+    fn spawn(d: *Daemon, then: control.Command) void {
+        var secs_buf: [16]u8 = undefined;
+        const secs = std.mem.print(&secs_buf, "{d}", .{d.settings.unload_after_s orelse 0}) catch unreachable;
+        const argv = [_][]const u8{
+            d.exe,
+            "ui",
+            "--socket",
+            d.ui_socket,
+            "--unload-after",
+            secs,
+            "--then",
+            @tagName(then),
+        };
+        const started_us = agent.nowUs();
+        d.child = std.process.spawn(d.io, .{ .argv = &argv }) catch |e| {
+            return log.err("UI-Prozess lässt sich nicht starten: {t}", .{e});
+        };
+        log.info("UI-Prozess gestartet (pid {d}) in {d} µs", .{ d.child.?.id.?, agent.nowUs() - started_us });
+    }
+};
+
+/// `ui.sock` next to the public socket.
+fn uiSocketPath(a: Allocator, socket: []const u8) ![]const u8 {
+    const dir = std.Io.Dir.path.dirname(socket) orelse return error.NoDirectory;
+    return a.print("{s}/ui.sock", .{dir});
+}

@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const build_options = @import("build_options");
 const core = @import("core.zig");
 const agent = @import("agent.zig");
+const daemon = @import("daemon.zig");
 const control = @import("control.zig");
 const apps = @import("mac/apps.zig");
 const icons = @import("mac/icons.zig");
@@ -15,10 +16,12 @@ const help =
     \\
     \\Befehle:
     \\  zugriff-zig                    Palette starten (Cmd+Space, Ctrl+Cmd+Space)
-    \\  zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>] [--unload-after <s|never>]
+    \\  zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
+    \\                  [--unload-after <s|never>] [--unload-mode window|process]
     \\                                 Palette mit eigenen Hotkeys starten; mit --unload-after
-    \\                                 wird sie nach so vielen Sekunden Ruhe entladen (weniger
-    \\                                 RAM, das nächste Öffnen dauert etwas länger)
+    \\                                 wird sie nach so vielen Sekunden Ruhe entladen: das
+    \\                                 Fenster (window: ~35 MB, Öffnen ~40 ms langsamer) oder
+    \\                                 der UI-Prozess (process: ~9 MB, ~150 ms langsamer)
     \\  zugriff-zig show               Laufende Palette anzeigen
     \\  zugriff-zig hide               Laufende Palette ausblenden
     \\  zugriff-zig toggle             Laufende Palette umschalten
@@ -52,20 +55,16 @@ pub fn main(init: std.process.Init) !void {
     const command = if (args.items.len > 0) args.items[0] else "run";
     const rest = if (args.items.len > 0) args.items[1..] else args.items;
     if (std.mem.eql(u8, command, "run")) {
-        const keys = parseRun(rest) catch |e| {
-            std.debug.print("zugriff-zig: {s}\n", .{switch (e) {
-                error.MissingValue => "die Option braucht einen Wert",
-                error.UnknownOption => "unbekannte Option für `run`",
-                error.InvalidValue => "`--unload-after` erwartet Sekunden oder `never`",
-            }});
-            std.process.exit(1);
-        };
-        // The agent stays resident: outside Debug it allocates with malloc,
-        // which packs small blocks and returns freed pages, instead of the
-        // checking allocator ReleaseSafe gets by default.
-        var resident = init;
-        if (builtin.mode != .debug) resident.gpa = std.heap.c_allocator;
-        return agent.Agent.run(resident.gpa, io, home, resident, keys);
+        const settings = parseRun(rest) catch |e| optionError(e);
+        const resident = residentInit(init);
+        if (settings.unload_mode == .process) return daemon.Daemon.run(resident.gpa, io, home, resident, settings);
+        return agent.Agent.run(resident.gpa, io, home, resident, settings);
+    }
+    // Internal: the UI process `--unload-mode process` starts (`daemon.zig`).
+    if (std.mem.eql(u8, command, "ui")) {
+        const settings = parseUi(rest) catch |e| optionError(e);
+        const resident = residentInit(init);
+        return agent.Agent.run(resident.gpa, io, home, resident, settings);
     }
     if (control.Command.parse(command) != null or std.mem.eql(u8, command, "status")) {
         const socket = try control.socketPath(arena, home);
@@ -90,7 +89,49 @@ pub fn main(init: std.process.Init) !void {
     std.process.exit(1);
 }
 
-fn parseRun(args: []const []const u8) error{ MissingValue, UnknownOption, InvalidValue }!agent.Settings {
+const OptionError = error{ MissingValue, UnknownOption, InvalidValue, ProcessNeedsTime };
+
+fn optionError(e: OptionError) noreturn {
+    std.debug.print("zugriff-zig: {s}\n", .{switch (e) {
+        error.MissingValue => "die Option braucht einen Wert",
+        error.UnknownOption => "unbekannte Option für `run`",
+        error.InvalidValue => "`--unload-after` erwartet Sekunden oder `never`, `--unload-mode` window oder process",
+        error.ProcessNeedsTime => "`--unload-mode process` braucht `--unload-after <sekunden>`",
+    }});
+    std.process.exit(1);
+}
+
+/// The agent and the daemon stay resident: outside Debug they allocate with
+/// malloc, which packs small blocks, instead of the checking allocator
+/// ReleaseSafe gets by default.
+fn residentInit(init: std.process.Init) std.process.Init {
+    var resident = init;
+    if (builtin.mode != .debug) resident.gpa = std.heap.c_allocator;
+    return resident;
+}
+
+/// `ui --socket <path> --unload-after <s> --then <command>`, from the daemon.
+fn parseUi(args: []const []const u8) OptionError!agent.Settings {
+    var s: agent.Settings = .{ .hotkeys = false, .unload_mode = .process };
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        i += 1;
+        if (i >= args.len) return error.MissingValue;
+        const value = args[i];
+        if (std.mem.eql(u8, arg, "--socket")) {
+            s.socket = value;
+        } else if (std.mem.eql(u8, arg, "--unload-after")) {
+            s.unload_after_s = std.fmt.parseInt(u32, value, 10) catch return error.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--then")) {
+            s.then = control.Command.parse(value) orelse return error.InvalidValue;
+        } else return error.UnknownOption;
+    }
+    if (s.socket == null or s.unload_after_s == null) return error.MissingValue;
+    return s;
+}
+
+fn parseRun(args: []const []const u8) OptionError!agent.Settings {
     var keys: agent.Settings = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -110,8 +151,13 @@ fn parseRun(args: []const []const u8) error{ MissingValue, UnknownOption, Invali
                 null
             else
                 std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidValue;
+        } else if (std.mem.eql(u8, arg, "--unload-mode")) {
+            i += 1;
+            if (i >= args.len) return error.MissingValue;
+            keys.unload_mode = std.meta.stringToEnum(agent.UnloadMode, args[i]) orelse return error.InvalidValue;
         } else return error.UnknownOption;
     }
+    if (keys.unload_mode == .process and keys.unload_after_s == null) return error.ProcessNeedsTime;
     return keys;
 }
 
@@ -208,4 +254,21 @@ test "run takes how long the hidden palette stays loaded" {
     try std.testing.expect((try parseRun(&.{ "--unload-after", "never" })).unload_after_s == null);
     try std.testing.expectError(error.InvalidValue, parseRun(&.{ "--unload-after", "bald" }));
     try std.testing.expectError(error.MissingValue, parseRun(&.{"--unload-after"}));
+}
+
+test "run can unload the whole UI process" {
+    const s = try parseRun(&.{ "--unload-after", "10", "--unload-mode", "process" });
+    try std.testing.expectEqual(agent.UnloadMode.process, s.unload_mode);
+    try std.testing.expectEqual(agent.UnloadMode.window, (try parseRun(&.{})).unload_mode);
+    try std.testing.expectError(error.ProcessNeedsTime, parseRun(&.{ "--unload-mode", "process" }));
+    try std.testing.expectError(error.InvalidValue, parseRun(&.{ "--unload-mode", "tab" }));
+}
+
+test "the UI process takes its socket, idle time and first command" {
+    const s = try parseUi(&.{ "--socket", "/tmp/ui.sock", "--unload-after", "10", "--then", "emoji" });
+    try std.testing.expectEqualStrings("/tmp/ui.sock", s.socket.?);
+    try std.testing.expect(!s.hotkeys);
+    try std.testing.expectEqual(agent.UnloadMode.process, s.unload_mode);
+    try std.testing.expectEqual(control.Command.emoji, s.then.?);
+    try std.testing.expectError(error.MissingValue, parseUi(&.{ "--then", "show" }));
 }
