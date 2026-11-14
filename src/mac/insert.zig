@@ -42,6 +42,19 @@ pub fn isTrusted() bool {
     return AXIsProcessTrusted() != 0;
 }
 
+/// Asks `isTrusted` once on a helper thread. The first answer of a process
+/// comes from the TCC daemon (about 11 ms on macOS 27.2), later ones from a
+/// cache; started while AppKit sets up, the first show no longer waits for
+/// it on the main thread. Without a thread the first show asks itself.
+pub fn prefetchTrust() void {
+    const t = std.Thread.spawn(.{}, struct {
+        fn ask() void {
+            _ = isTrusted();
+        }
+    }.ask, .{}) catch return;
+    t.detach();
+}
+
 /// Whether some app holds secure event input (a focused password field).
 pub fn secureInputActive() bool {
     return IsSecureEventInputEnabled() != 0;

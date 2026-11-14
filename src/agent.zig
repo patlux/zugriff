@@ -140,6 +140,8 @@ pub const Agent = struct {
         );
         defer app.destroy();
         log.info("App angelegt", .{});
+        // The first show asks for the Accessibility permission; ask now, aside.
+        insert.prefetchTrust();
         const agent = try gpa.create(Agent);
         defer gpa.destroy(agent);
         agent.* = .{ .gpa = gpa, .io = io, .home = home, .app = app, .settings = settings };
