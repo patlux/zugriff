@@ -2,7 +2,7 @@
 
 Zugriff in Zig: the macOS command palette of `zugriff-menu-rust` (Rust and
 GPUI), rebuilt in Zig 0.17.1 on nanoui (pinned in `build.zig.zon`). What it does, its commands
-and its layout are in `README.md`. The Rust version's `PRODUCT.md` owns the product intent; this
+and its layout are in `README.md`. The Rust version is archived; its `PRODUCT.md` owns the product intent; this
 port follows it and names its differences in `README.md`.
 
 ## Opening contract

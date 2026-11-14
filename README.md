@@ -2,7 +2,8 @@
 
 Schnelle, native Command Palette für macOS, in Zig 0.17 auf
 [nanoui](https://github.com/justrach/nanoui) gebaut. Ein Nachbau von
-[`zugriff-menu`](../zugriff-menu) (Rust und GPUI); dessen `PRODUCT.md` bestimmt,
+`zugriff-menu-rust`
+(Rust und GPUI), den es seit 2026-11-14 ersetzt. Dessen `PRODUCT.md` bestimmt,
 was die Palette tun soll. Dieses README nennt, was hier anders ist.
 
 Zugriff läuft als residenter Agent ohne Dock-Icon. Ein globaler Hotkey blendet
@@ -159,7 +160,7 @@ GUI-Testrechner starten (siehe `AGENTS.md`).
 Die Emoji-Tabelle (`src/core/emoji_data.zig` mit den Texten in
 `src/core/emoji_strings.txt`) erzeugt nur `scripts/emoji_data.py`,
 aus gepinnten Quellen (`--sources <ordner>`) oder aus der Tabelle der
-Rust-Version (`--from-rust <data.rs>`).
+Rust-Version (`--from-rust <data.rs>` aus einem Checkout von `zugriff-menu-rust`).
 
 Jeder Commit bringt ein Changeset mit; Ablauf und Release in `CONTRIBUTING.md`.
 

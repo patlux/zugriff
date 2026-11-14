@@ -13,7 +13,7 @@ Sources (downloaded into --sources, or read from there if present):
 
 Usage:
     python3 scripts/emoji_data.py --sources /tmp/zugriff-emoji-sources
-    python3 scripts/emoji_data.py --from-rust ../zugriff-menu/crates/zugriff-core/src/emoji/data.rs
+    python3 scripts/emoji_data.py --from-rust ../zugriff-menu-rust/crates/zugriff-core/src/emoji/data.rs
 """
 
 from __future__ import annotations
@@ -162,7 +162,7 @@ def render(entries: list[dict]) -> tuple[bytes, str]:
 
 
 def from_rust(path: pathlib.Path) -> list[dict]:
-    """The entries of zugriff-menu's generated `emoji/data.rs` (the same sources)."""
+    """The entries of zugriff-menu-rust's generated `emoji/data.rs` (the same sources)."""
     string = r'"(?:[^"\\]|\\.)*"'
     entries = []
     for block in re.findall(r"Emoji \{(.*?)\n    \}", path.read_text(), re.S):
@@ -191,7 +191,7 @@ def write(entries: list[dict]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--sources", type=pathlib.Path, help="folder for the downloaded sources")
-    parser.add_argument("--from-rust", type=pathlib.Path, help="read the entries from zugriff-menu's emoji/data.rs instead")
+    parser.add_argument("--from-rust", type=pathlib.Path, help="read the entries from zugriff-menu-rust's emoji/data.rs instead")
     arguments = parser.parse_args()
     if arguments.from_rust:
         write(from_rust(arguments.from_rust))
