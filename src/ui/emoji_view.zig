@@ -49,7 +49,7 @@ pub const InsertSupport = enum {
 const Entry = enum { hotkey, from_search };
 
 pub const Cell = struct {
-    /// Index into `emoji.all`.
+    /// Index for `emoji.get`.
     emoji: usize,
     /// The glyph shown and inserted, with the remembered skin tone.
     glyph: []const u8,
@@ -170,7 +170,7 @@ pub const Picker = struct {
                 try k.detail.print(gpa, "{d} Emoji", .{hits.len});
                 try k.lines.append(gpa, .{ .section = .{ .title = k.title.items, .detail = k.detail.items } });
                 const start = k.cells.items.len;
-                for (hits) |i| try k.cells.append(gpa, .{ .emoji = i, .glyph = emoji.all[i].withTone(k.prefs.tone) });
+                for (hits) |i| try k.cells.append(gpa, .{ .emoji = i, .glyph = emoji.get(i).withTone(k.prefs.tone) });
                 try k.pushRows(gpa, start);
             }
         }
@@ -184,7 +184,7 @@ pub const Picker = struct {
             try k.lines.append(gpa, .{ .section = .{ .title = Section.title(.recent), .detail = "⌘1–9" } });
             for (k.prefs.recentSlice()) |glyph| {
                 const f = emoji.find(glyph) orelse continue;
-                try k.cells.append(gpa, .{ .emoji = f.index, .glyph = emoji.all[f.index].withTone(f.tone) });
+                try k.cells.append(gpa, .{ .emoji = f.index, .glyph = emoji.get(f.index).withTone(f.tone) });
             }
             try k.pushRows(gpa, 0);
         }
@@ -192,8 +192,8 @@ pub const Picker = struct {
             const start = k.cells.items.len;
             try k.sections.append(gpa, .{ .section = .{ .group = group }, .start = start });
             try k.lines.append(gpa, .{ .section = .{ .title = group.title(), .detail = null } });
-            for (emoji.all, 0..) |e, i| if (e.group == group) {
-                try k.cells.append(gpa, .{ .emoji = i, .glyph = e.withTone(k.prefs.tone) });
+            for (0..emoji.table_len) |i| if (emoji.groupOf(i) == group) {
+                try k.cells.append(gpa, .{ .emoji = i, .glyph = emoji.get(i).withTone(k.prefs.tone) });
             };
             try k.pushRows(gpa, start);
         }
@@ -277,7 +277,7 @@ pub const Picker = struct {
 
     fn openTones(k: *Picker, gpa: Allocator) !bool {
         const cell = k.selectedCell() orelse return false;
-        if (!emoji.all[cell.emoji].hasTones()) return false;
+        if (!emoji.get(cell.emoji).hasTones()) return false;
         const pos = k.position() orelse return false;
         k.tones = if (emoji.find(cell.glyph)) |f| f.tone else k.prefs.tone;
         try k.lines.insert(gpa, pos.line + 1, .tones);
@@ -480,7 +480,7 @@ pub fn quickKey(p: *Palette, number: u21) bool {
     const recent = k.prefs.recentSlice();
     if (number > recent.len) return false;
     const f = emoji.find(recent[number - 1]) orelse return false;
-    insert(p, emoji.all[f.index].withTone(f.tone), false);
+    insert(p, emoji.get(f.index).withTone(f.tone), false);
     return true;
 }
 
@@ -490,7 +490,7 @@ pub fn confirm(p: *Palette) void {
     if (k.prompt) |prompt| return answerPrompt(p, prompt, prompt.row);
     const cell = k.selectedCell() orelse return p.beep();
     if (k.tones) |tone| {
-        insert(p, emoji.all[cell.emoji].withTone(tone), true);
+        insert(p, emoji.get(cell.emoji).withTone(tone), true);
     } else insert(p, cell.glyph, false);
 }
 
@@ -499,7 +499,7 @@ pub fn copy(p: *Palette) void {
     const k = &p.emoji;
     if (k.prompt) |prompt| return answerPrompt(p, prompt, .copy_only);
     const cell = k.selectedCell() orelse return p.beep();
-    const glyph = if (k.tones) |tone| emoji.all[cell.emoji].withTone(tone) else cell.glyph;
+    const glyph = if (k.tones) |tone| emoji.get(cell.emoji).withTone(tone) else cell.glyph;
     k.record(glyph, k.tones != null);
     p.emit(.{ .emoji_prefs = k.prefs });
     p.emit(.{ .copy = glyph });
@@ -557,7 +557,7 @@ pub fn footer(p: *Palette, c: *ui.Context, buf: *[6][]const u8) []const []const 
         return &.{ "↵ Kopieren", "esc Schließen" };
     }
     var n: usize = 0;
-    if (emoji.all[cell.emoji].hasTones()) {
+    if (emoji.get(cell.emoji).hasTones()) {
         buf[n] = "⇥ Hauttöne";
         n += 1;
     }
@@ -576,7 +576,7 @@ fn footerText(c: *ui.Context, s: []const u8, color: ui.Color) void {
 fn selectedLabel(p: *Palette, c: *ui.Context) void {
     const k = &p.emoji;
     const cell = k.selectedCell() orelse return;
-    const entry = emoji.all[cell.emoji];
+    const entry = emoji.get(cell.emoji);
     const glyph = if (k.tones) |tone| entry.withTone(tone) else cell.glyph;
     var codes: std.ArrayList(u8) = .empty;
     var it = entry.shortcodes();
@@ -697,7 +697,7 @@ fn lineView(p: *Palette, c: *ui.Context, l: Line) void {
 fn cellView(p: *Palette, c: *ui.Context, index: usize) void {
     const k = &p.emoji;
     const cell = k.cells.items[index];
-    const entry = emoji.all[cell.emoji];
+    const entry = emoji.get(cell.emoji);
     const selected = index == k.selected;
     const box = ui.div(c).size(cell_size, cell_size).rounded(8).center().control();
     defer box.end();
@@ -716,7 +716,7 @@ fn cellView(p: *Palette, c: *ui.Context, index: usize) void {
 fn tonesView(p: *Palette, c: *ui.Context) void {
     const k = &p.emoji;
     const cell = k.selectedCell() orelse return;
-    const entry = emoji.all[cell.emoji];
+    const entry = emoji.get(cell.emoji);
     const chosen = k.tones orelse .default;
     const outer = ui.div(c).wFull().px(10).pb(4);
     defer outer.end();

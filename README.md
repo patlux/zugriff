@@ -96,7 +96,8 @@ Die Tests rendern die Palette offscreen mit `ui.Tester`; sie öffnen kein
 Fenster und registrieren keine Hotkeys. Den echten Agent nur auf einem
 GUI-Testrechner starten (siehe `AGENTS.md`).
 
-Die Emoji-Tabelle `src/core/emoji_data.zig` erzeugt nur `scripts/emoji_data.py`,
+Die Emoji-Tabelle (`src/core/emoji_data.zig` mit den Texten in
+`src/core/emoji_strings.txt`) erzeugt nur `scripts/emoji_data.py`,
 aus gepinnten Quellen (`--sources <ordner>`) oder aus der Tabelle der
 Rust-Version (`--from-rust <data.rs>`).
 

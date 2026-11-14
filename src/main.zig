@@ -115,12 +115,12 @@ fn listApps(a: std.mem.Allocator, io: std.Io, home: ?[]const u8, out: *std.Io.Wr
 
 /// Searches the emoji like the picker and prints the best hits.
 fn listEmoji(a: std.mem.Allocator, out: *std.Io.Writer, query: []const u8) !void {
-    const all = core.emoji.all;
-    if (core.text.trim(query).len == 0) return out.print("{d} Emoji\n", .{all.len});
+    const count = core.emoji.table_len;
+    if (core.text.trim(query).len == 0) return out.print("{d} Emoji\n", .{count});
     const hits = try core.emoji.search(a, query, &.{});
-    try out.print("{d} Emoji, {d} Treffer\n", .{ all.len, hits.len });
+    try out.print("{d} Emoji, {d} Treffer\n", .{ count, hits.len });
     for (hits[0..@min(hits.len, 30)]) |i| {
-        const e = all[i];
+        const e = core.emoji.get(i);
         try out.print("{s}  {s:<44} ", .{ e.glyph, e.name });
         var codes = e.shortcodes();
         while (codes.next()) |code| try out.print(":{s}: ", .{code});

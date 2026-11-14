@@ -2,8 +2,9 @@
 //! English names, keywords and shortcodes, and the remembered preferences.
 //!
 //! The table comes from `scripts/emoji_data.py` and is static data in the
-//! binary. Nothing is read, parsed or downloaded at run time, so the picker
-//! has its emoji the moment the palette opens.
+//! binary: the texts once in `emoji_strings.txt`, the table only where they
+//! lie. Nothing is read, parsed or downloaded at run time, so the picker has
+//! its emoji the moment the palette opens.
 const std = @import("std");
 const text = @import("text.zig");
 const data = @import("emoji_data.zig");
@@ -110,14 +111,56 @@ pub const Emoji = struct {
     }
 };
 
-/// Every emoji, in Unicode order (grouped like `Group.all`).
-pub const all: []const Emoji = &data.table;
+/// Where one emoji lies in the generated `emoji_strings.txt`: its fields
+/// follow each other from `start`, each ended by a tab or, the last one,
+/// by the newline.
+pub const Record = struct {
+    start: u32,
+    group: Group,
+    /// Byte lengths of glyph, name, folded, keywords, english and codes,
+    /// then of the five skin-toned glyphs (zero without skin tones).
+    lens: [text_fields + 5]u16,
+
+    const text_fields = 6;
+};
+
+/// The number of emoji in the table.
+pub const table_len = data.table.len;
+
+/// The group of emoji `i`, without building the whole entry.
+pub fn groupOf(i: usize) Group {
+    return data.table[i].group;
+}
+
+/// Emoji `i` of the table, in Unicode order (grouped like `Group.all`).
+/// Its texts point into the static strings and are never freed.
+pub fn get(i: usize) Emoji {
+    const r = data.table[i];
+    var fields: [r.lens.len][]const u8 = undefined;
+    const used: usize = if (r.lens[Record.text_fields] == 0) Record.text_fields else r.lens.len;
+    var at: usize = r.start;
+    for (fields[0..used], r.lens[0..used]) |*f, len| {
+        f.* = data.strings[at..][0..len];
+        at += len + 1;
+    }
+    return .{
+        .glyph = fields[0],
+        .group = r.group,
+        .name = fields[1],
+        .folded = fields[2],
+        .keywords = fields[3],
+        .english = fields[4],
+        .codes = fields[5],
+        .tones = if (used == Record.text_fields) null else fields[Record.text_fields..].*,
+    };
+}
 
 /// The table entry for `glyph` and the tone it carries. Recently used emoji
 /// are stored as the glyph that was inserted, so a skin-toned variant maps
 /// back to its base emoji here.
 pub fn find(glyph: []const u8) ?struct { index: usize, tone: Tone } {
-    for (all, 0..) |e, i| {
+    for (0..table_len) |i| {
+        const e = get(i);
         if (std.mem.eql(u8, e.glyph, glyph)) return .{ .index = i, .tone = .default };
         if (e.tones) |tones| for (tones, 0..) |variant, t| {
             if (std.mem.eql(u8, variant, glyph)) return .{ .index = i, .tone = Tone.fromIndex(t + 1).? };
@@ -151,7 +194,7 @@ const infix_min_chars = 3;
 
 const word_separators = " -_:,";
 
-/// Searches the table; indices into `all`, best first. The caller frees.
+/// Searches the table; indices for `get`, best first. The caller frees.
 ///
 /// Every whitespace-separated token has to match a German name or keyword,
 /// a shortcode, or an English name or keyword. Colons around the query
@@ -178,7 +221,8 @@ pub fn search(gpa: std.mem.Allocator, query: []const u8, recent: []const []const
     const Hit = struct { index: usize, score: u32, recency: usize };
     var hits: std.ArrayList(Hit) = .empty;
     defer hits.deinit(gpa);
-    for (all, 0..) |e, i| {
+    for (0..table_len) |i| {
+        const e = get(i);
         var total: u32 = 0;
         const matched = for (tokens.items) |t| {
             total += score(e, t) orelse break false;
@@ -351,7 +395,7 @@ pub const Prefs = struct {
 /// The table's own copy of `glyph`, so it outlives the text it came from.
 fn staticGlyph(glyph: []const u8) ?[]const u8 {
     const f = find(glyph) orelse return null;
-    return all[f.index].withTone(f.tone);
+    return get(f.index).withTone(f.tone);
 }
 
 const testing = std.testing;
@@ -360,7 +404,7 @@ fn glyphs(query: []const u8) ![]const []const u8 {
     const hits = try search(testing.allocator, query, &.{});
     defer testing.allocator.free(hits);
     const out = try testing.allocator.alloc([]const u8, hits.len);
-    for (hits, out) |h, *o| o.* = all[h].glyph;
+    for (hits, out) |h, *o| o.* = get(h).glyph;
     return out;
 }
 
@@ -370,17 +414,18 @@ fn position(list: []const []const u8, glyph: []const u8) ?usize {
 }
 
 test "the table is complete and grouped in order" {
-    try testing.expect(all.len > 1800);
+    try testing.expect(table_len > 1800);
     var last: usize = 0;
-    for (all) |e| {
+    for (0..table_len) |i| {
+        const e = get(i);
         const p = @backingInt(e.group);
         try testing.expect(p >= last);
         last = p;
         try testing.expect(e.name.len > 0);
     }
     for (Group.all) |g| {
-        const found = for (all) |e| {
-            if (e.group == g) break true;
+        const found = for (0..table_len) |i| {
+            if (get(i).group == g) break true;
         } else false;
         try testing.expect(found);
     }
@@ -459,18 +504,18 @@ test "recently used emoji win ties" {
     try testing.expectEqualStrings("👎", plain[1]);
     const recent = try search(testing.allocator, "daumen", &.{"👎🏽"});
     defer testing.allocator.free(recent);
-    try testing.expectEqualStrings("👎", all[recent[0]].glyph);
+    try testing.expectEqualStrings("👎", get(recent[0]).glyph);
 }
 
 test "skin tones map both ways" {
     const f = find("👍🏽").?;
-    try testing.expectEqualStrings("👍", all[f.index].glyph);
+    try testing.expectEqualStrings("👍", get(f.index).glyph);
     try testing.expectEqual(Tone.medium, f.tone);
-    try testing.expectEqualStrings("👍🏽", all[f.index].withTone(.medium));
-    try testing.expectEqualStrings("👍", all[f.index].withTone(.default));
+    try testing.expectEqualStrings("👍🏽", get(f.index).withTone(.medium));
+    try testing.expectEqualStrings("👍", get(f.index).withTone(.default));
     const heart = find("❤️").?;
-    try testing.expect(!all[heart.index].hasTones());
-    try testing.expectEqualStrings("❤️", all[heart.index].withTone(.dark));
+    try testing.expect(!get(heart.index).hasTones());
+    try testing.expectEqualStrings("❤️", get(heart.index).withTone(.dark));
 }
 
 test "prefs round-trip and skip garbage" {
@@ -495,7 +540,26 @@ test "prefs round-trip and skip garbage" {
 
 test "the recent list is bounded" {
     var p: Prefs = .{};
-    for (all[0 .. recent_limit + 5]) |e| p.record(e.glyph);
+    for (0..recent_limit + 5) |i| p.record(get(i).glyph);
     try testing.expectEqual(@as(usize, recent_limit), p.recent_len);
-    try testing.expectEqualStrings(all[recent_limit + 4].glyph, p.recent[0]);
+    try testing.expectEqualStrings(get(recent_limit + 4).glyph, p.recent[0]);
+}
+
+test "every record lines up with its line of the strings" {
+    var line_start: usize = 0;
+    for (data.table, 0..) |r, i| {
+        try testing.expectEqual(line_start, r.start);
+        const e = get(i);
+        try testing.expect(e.glyph.len > 0 and e.name.len > 0 and e.folded.len > 0);
+        const last = if (e.tones) |t| t[4] else e.codes;
+        const end = @intFromPtr(last.ptr) - @intFromPtr(data.strings.ptr) + last.len;
+        try testing.expectEqual(@as(u8, '\n'), data.strings[end]);
+        const line = data.strings[r.start..end];
+        try testing.expect(std.mem.findScalar(u8, line, '\n') == null);
+        const tabs = std.mem.countScalar(u8, line, '\t');
+        try testing.expectEqual(@as(usize, if (e.tones == null) 5 else 10), tabs);
+        if (e.tones) |t| for (t) |tone| try testing.expect(tone.len > 0);
+        line_start = end + 1;
+    }
+    try testing.expectEqual(data.strings.len, line_start);
 }
