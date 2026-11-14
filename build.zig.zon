@@ -1,0 +1,13 @@
+.{
+    .name = .zugriff,
+    .version = "0.0.0",
+    .dependencies = .{
+        .nanoui = .{
+            .url = "git+https://github.com/justrach/nanoui?ref=v0.14.4#1b43b1ab91f9cf5713a4b6c12074d41417866247",
+            .hash = "nanoui-0.14.4-we0KMRvDPQA3e09yX86VgxjZ_jinWlPQRwUEYUuOUT_V",
+        },
+    },
+    .minimum_zig_version = "0.17.1",
+    .paths = .{""},
+    .fingerprint = 0xb4cff7c068d6b332,
+}

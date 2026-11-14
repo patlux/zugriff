@@ -1,0 +1,8 @@
+[[tools."github:rockorager/ziglint"]]
+version = "0.8.1"
+backend = "github:rockorager/ziglint"
+"platforms.macos-arm64" = { checksum = "sha256:fdb24f662e51c3ba452be047f138b6d365788149779296c5f6fe9229c192054b", url = "https://github.com/rockorager/ziglint/releases/download/v0.8.1/ziglint-aarch64-macos.tar.gz", url_api = "https://api.github.com/repos/rockorager/ziglint/releases/assets/720764679"}
+
+[[tools.zig]]
+version = "0.17.1"
+backend = "asdf:zig"

@@ -1,0 +1,32 @@
+[settings]
+lockfile = true
+
+[tools]
+zig = "0.17.1"
+"github:rockorager/ziglint" = "0.8.1"
+
+[tasks.build]
+description = "Build the binary and check formatting"
+run = [
+  "zig build",
+  "zig fmt --check build.zig build.zig.zon src",
+]
+
+[tasks.test]
+description = "Run the tests in Debug and ReleaseSafe (offscreen, no window)"
+run = [
+  "zig build test",
+  "zig build test -Doptimize=ReleaseSafe",
+]
+
+[tasks.lint]
+description = "ziglint over src and build.zig"
+run = "ziglint"
+
+[tasks.check]
+description = "Everything before a commit: build, test, lint"
+run = [
+  "mise run build",
+  "mise run test",
+  "mise run lint",
+]

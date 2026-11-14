@@ -1,0 +1,7 @@
+.{
+    // Our own sources only; zig-pkg/ (dependencies) and caches stay out.
+    .paths = .{
+        "src",
+        "build.zig",
+    },
+}

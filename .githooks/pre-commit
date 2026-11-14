@@ -1,0 +1,5 @@
+#!/bin/sh
+# Keep the check in the repository so existing clones pick up improvements.
+set -eu
+root=$(git rev-parse --show-toplevel)
+exec python3 "$root/scripts/changeset.py" check-staged
