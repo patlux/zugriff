@@ -14,6 +14,13 @@ const theme = @import("theme.zig");
 const calc_view = @import("calc_view.zig");
 const emoji_view = @import("emoji_view.zig");
 const Glyphs = @import("glyphs.zig").Glyphs;
+
+/// Emoji pictures cached while the palette is open (16 KB each): at most
+/// `glyphs_max`, trimmed to `glyphs_kept`; `glyphs_kept_closed` stay while
+/// it is closed. A dropped one costs about 0,15 ms to draw again.
+const glyphs_max = 256;
+const glyphs_kept = 192;
+const glyphs_kept_closed = 96;
 const Action = core.Action;
 const Item = core.Item;
 const Catalog = core.Catalog;
@@ -234,6 +241,8 @@ pub const Palette = struct {
 
     /// The panel is closing. A result on screen goes into the history.
     pub fn closed(p: *Palette, now_ms: i64) !void {
+        // The emoji the next open shows first are among the recent ones.
+        p.glyphs.trim(glyphs_kept_closed);
         try p.calc.closed(now_ms);
     }
 
@@ -614,6 +623,8 @@ pub const Palette = struct {
     }
 
     fn build(p: *Palette, c: *ui.Context) !void {
+        // Between frames: nanoui painted the last one, this one draws nothing yet.
+        if (p.glyphs.count() > glyphs_max) p.glyphs.trim(glyphs_kept);
         try p.keys(c);
         const root = ui.div(c).column().sizeFull().bg(theme.background);
         defer root.end();

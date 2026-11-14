@@ -3,7 +3,8 @@
 //! nanoui's glyph atlas holds coverage masks, so text in it takes one
 //! colour: an emoji would come out as a silhouette. The picker draws each
 //! emoji with CoreText into a small picture instead, once per process, and
-//! shows it with `ui.image`. Only the emoji in view are drawn.
+//! shows it with `ui.image`. Only the emoji in view are drawn, and the
+//! cache keeps the most recently shown (`trim`).
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
@@ -55,10 +56,19 @@ const utf8_encoding: u32 = 0x08000100;
 /// Premultiplied alpha first, 32-bit little endian: BGRA in memory.
 const bgra_premultiplied: u32 = 2 | (2 << 12);
 
+/// A drawn emoji and when it was last shown.
+const Picture = struct {
+    /// BGRA, `pixels` square; empty when CoreText could not draw it.
+    px: []u8,
+    used: u64,
+};
+
 pub const Glyphs = struct {
     gpa: std.mem.Allocator,
-    /// The pictures by glyph; a failed one is an empty slice.
-    map: std.StringHashMapUnmanaged([]u8) = .empty,
+    /// The pictures by glyph.
+    map: std.array_hash_map.String(Picture) = .empty,
+    /// Counts `get` calls: the newest picture has the highest `used`.
+    clock: u64 = 0,
     font: ?CfRef = null,
 
     pub fn init(gpa: std.mem.Allocator) Glyphs {
@@ -66,10 +76,9 @@ pub const Glyphs = struct {
     }
 
     pub fn deinit(g: *Glyphs) void {
-        var it = g.map.iterator();
-        while (it.next()) |e| {
-            g.gpa.free(e.key_ptr.*);
-            g.gpa.free(e.value_ptr.*);
+        for (g.map.keys(), g.map.values()) |k, v| {
+            g.gpa.free(k);
+            g.gpa.free(v.px);
         }
         g.map.deinit(g.gpa);
         if (g.font) |f| CFRelease(f);
@@ -79,15 +88,46 @@ pub const Glyphs = struct {
     /// The picture of `glyph`, drawn on first use; null when CoreText
     /// could not draw it.
     fn get(g: *Glyphs, glyph: []const u8) ?[]const u8 {
-        if (g.map.get(glyph)) |px| return if (px.len > 0) px else null;
+        g.clock += 1;
+        if (g.map.getPtr(glyph)) |pic| {
+            pic.used = g.clock;
+            return if (pic.px.len > 0) pic.px else null;
+        }
         const px: []u8 = g.render(glyph) catch &.{};
         const key = g.gpa.dupe(u8, glyph) catch return null;
-        g.map.put(g.gpa, key, px) catch {
+        g.map.put(g.gpa, key, .{ .px = px, .used = g.clock }) catch {
             g.gpa.free(key);
             g.gpa.free(px);
             return null;
         };
         return if (px.len > 0) px else null;
+    }
+
+    /// Keeps the `keep` most recently shown pictures (16 KB each) and frees
+    /// the rest. nanoui reads a picture's pixels when it paints the frame, so
+    /// call this between frames, never while one is being built.
+    pub fn trim(g: *Glyphs, keep: usize) void {
+        const n = g.map.count();
+        if (n <= keep) return;
+        // The `used` stamp of the oldest picture that stays.
+        const stamps = g.gpa.alloc(u64, n) catch return;
+        defer g.gpa.free(stamps);
+        for (g.map.values(), stamps) |v, *st| st.* = v.used;
+        std.mem.sort(u64, stamps, {}, std.sort.desc(u64));
+        const oldest_kept = if (keep == 0) std.math.maxInt(u64) else stamps[keep - 1];
+        var i = n;
+        while (i > 0) {
+            i -= 1;
+            const v = g.map.values()[i];
+            if (v.used >= oldest_kept) continue;
+            g.gpa.free(g.map.keys()[i]);
+            g.gpa.free(v.px);
+            g.map.swapRemoveAt(i);
+        }
+    }
+
+    pub fn count(g: *const Glyphs) usize {
+        return g.map.count();
     }
 
     fn render(g: *Glyphs, glyph: []const u8) ![]u8 {
@@ -170,4 +210,17 @@ test "an emoji comes out in colour" {
         if (px[i + 3] > 0 and (r != gr or gr != b)) coloured = true;
     }
     try std.testing.expect(coloured);
+}
+
+test "trimming keeps the most recently shown" {
+    var g: Glyphs = .init(std.testing.allocator);
+    defer g.deinit();
+    for ([_][]const u8{ "🍔", "🍕", "🌮", "🍣" }) |e| _ = g.get(e);
+    _ = g.get("🍔");
+    g.trim(2);
+    try std.testing.expectEqual(@as(usize, 2), g.count());
+    try std.testing.expect(g.map.contains("🍔"));
+    try std.testing.expect(g.map.contains("🍣"));
+    g.trim(0);
+    try std.testing.expectEqual(@as(usize, 0), g.count());
 }

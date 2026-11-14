@@ -1,5 +1,6 @@
 //! Zugriff — a fast native command palette for macOS, in Zig on nanoui.
 const std = @import("std");
+const builtin = @import("builtin");
 const build_options = @import("build_options");
 const core = @import("core.zig");
 const agent = @import("agent.zig");
@@ -56,7 +57,12 @@ pub fn main(init: std.process.Init) !void {
             }});
             std.process.exit(1);
         };
-        return agent.Agent.run(init.gpa, io, home, init, keys);
+        // The agent stays resident: outside Debug it allocates with malloc,
+        // which packs small blocks and returns freed pages, instead of the
+        // checking allocator ReleaseSafe gets by default.
+        var resident = init;
+        if (builtin.mode != .debug) resident.gpa = std.heap.c_allocator;
+        return agent.Agent.run(resident.gpa, io, home, resident, keys);
     }
     if (control.Command.parse(command) != null or std.mem.eql(u8, command, "status")) {
         const socket = try control.socketPath(arena, home);
