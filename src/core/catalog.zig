@@ -56,6 +56,12 @@ pub const Catalog = struct {
         return if (index < c.items.len) c.items[index] else null;
     }
 
+    /// The index of the first row with `action`.
+    pub fn find(c: Catalog, action: item_mod.Action) ?usize {
+        for (c.items, 0..) |it, i| if (it.action.eql(action)) return i;
+        return null;
+    }
+
     /// Attaches an icon to one row; unknown indices are ignored.
     pub fn setIcon(c: *Catalog, index: usize, icon: Icon) !void {
         if (index >= c.items.len) return;

@@ -17,6 +17,7 @@ const theme = @import("ui/theme.zig");
 const control = @import("control.zig");
 const app_scan = @import("app_scan.zig");
 const emoji_prefs = @import("emoji_prefs.zig");
+const help_seen = @import("help_seen.zig");
 const sync = @import("sync.zig");
 const apps = @import("mac/apps.zig");
 const icons = @import("mac/icons.zig");
@@ -118,6 +119,9 @@ pub const Agent = struct {
     deferred_scheduled: bool = false,
     prefs_writer: ?emoji_prefs.Writer = null,
     prefs_loaded: ?core.emoji.Prefs = null,
+    /// The marker that the help was opened once, and what reading it found.
+    help_seen_file: ?[]const u8 = null,
+    help_seen_loaded: ?bool = null,
     server: ?control.Server = null,
     staged: ?insert.Staged = null,
 
@@ -172,10 +176,13 @@ pub const Agent = struct {
             agent.handle(c);
         } else agent.scheduleUnload();
         const prefs_file = try emoji_prefs.path(init.arena.allocator(), home);
+        agent.help_seen_file = try help_seen.path(init.arena.allocator(), home);
         if (prefs_file) |file| {
             agent.prefs_writer = .{ .io = io, .file = file };
             try agent.prefs_writer.?.start();
-            const t = try std.Thread.spawn(.{}, loadPrefs, .{ agent, file });
+        }
+        if (prefs_file != null or agent.help_seen_file != null) {
+            const t = try std.Thread.spawn(.{}, loadPrefs, .{ agent, prefs_file });
             t.detach();
         }
         try app.run();
@@ -450,6 +457,10 @@ pub const Agent = struct {
                 if (a.prefs_writer) |*w| w.put(p);
                 return;
             },
+            .help_seen => {
+                if (a.help_seen_file) |file| help_seen.markInBackground(a.io, file);
+                return;
+            },
             .dismiss => .dismiss,
             .activate => |action| .{ .activate = dupeAction(a.gpa, action) catch return },
             .copy => |t| .{ .copy = a.gpa.dupe(u8, t) catch return },
@@ -657,17 +668,18 @@ pub const Agent = struct {
         }
     }
 
-    // The emoji preferences.
+    // The emoji preferences and the help marker.
 
-    fn loadPrefs(a: *Agent, file: []const u8) void {
-        a.prefs_loaded = emoji_prefs.load(a.io, file);
+    fn loadPrefs(a: *Agent, file: ?[]const u8) void {
+        if (file) |f| a.prefs_loaded = emoji_prefs.load(a.io, f);
+        if (a.help_seen_file) |f| a.help_seen_loaded = help_seen.load(a.io, f);
         _ = nanoui.App.onMain(a, takePrefs);
     }
 
     fn takePrefs(ctx: ?*anyopaque) callconv(.c) void {
         const a: *Agent = @ptrCast(@alignCast(ctx.?));
-        const prefs = a.prefs_loaded orelse return;
-        a.palette.setEmojiPrefs(prefs) catch |e| log.warn("Emoji-Einstellungen: {t}", .{e});
+        if (a.prefs_loaded) |prefs| a.palette.setEmojiPrefs(prefs) catch |e| log.warn("Emoji-Einstellungen: {t}", .{e});
+        if (a.help_seen_loaded) |seen| a.palette.setHelpSeen(seen);
         a.redraw();
     }
 
@@ -729,13 +741,14 @@ fn dupeAction(gpa: Allocator, action: core.Action) !core.Action {
         .open_url => |u| .{ .open_url = try gpa.dupe(u8, u) },
         .reveal_path => |p| .{ .reveal_path = try gpa.dupe(u8, p) },
         .open_emoji_picker => .open_emoji_picker,
+        .open_help => .open_help,
     };
 }
 
 fn freeAction(gpa: Allocator, action: core.Action) void {
     switch (action) {
         .launch_application, .open_path, .open_url, .reveal_path => |s| gpa.free(s),
-        .open_emoji_picker => {},
+        .open_emoji_picker, .open_help => {},
     }
 }
 

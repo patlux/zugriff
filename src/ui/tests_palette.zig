@@ -19,6 +19,7 @@ pub const Recorded = union(enum) {
     insert: []const u8,
     request_insert_permission,
     emoji_prefs: core.emoji.Prefs,
+    help_seen,
     quit,
 };
 
@@ -41,11 +42,13 @@ pub const Fake = struct {
                 .open_url => |s| .{ .open_url = a.dupe(u8, s) catch unreachable },
                 .reveal_path => |s| .{ .reveal_path = a.dupe(u8, s) catch unreachable },
                 .open_emoji_picker => .open_emoji_picker,
+                .open_help => .open_help,
             } },
             .copy => |t| .{ .copy = a.dupe(u8, t) catch unreachable },
             .insert => |t| .{ .insert = a.dupe(u8, t) catch unreachable },
             .request_insert_permission => .request_insert_permission,
             .emoji_prefs => |p| .{ .emoji_prefs = p },
+            .help_seen => .help_seen,
             .quit => .quit,
         };
         f.events.append(a, r) catch unreachable;

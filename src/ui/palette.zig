@@ -1,6 +1,6 @@
 //! The launcher view: a search field, the ranked results and the selection,
-//! with the calculator (`calc_view.zig`) and the emoji picker
-//! (`emoji_view.zig`) in the same panel.
+//! with the calculator (`calc_view.zig`), the emoji picker
+//! (`emoji_view.zig`) and the help (`help_view.zig`) in the same panel.
 //!
 //! The palette owns the query, the rows and what is selected. It never
 //! launches, copies or hides anything itself: it emits an `Event`, and the
@@ -13,6 +13,7 @@ const core = @import("../core.zig");
 const theme = @import("theme.zig");
 const calc_view = @import("calc_view.zig");
 const emoji_view = @import("emoji_view.zig");
+const help_view = @import("help_view.zig");
 const Glyphs = @import("glyphs.zig").Glyphs;
 
 /// The picture atlas starts at 512² (1 MB) instead of nanoui's 2048²
@@ -65,6 +66,8 @@ pub const Event = union(enum) {
     request_insert_permission,
     /// The emoji preferences changed; persist them.
     emoji_prefs: core.emoji.Prefs,
+    /// The help was opened for the first time; the footer tip is done.
+    help_seen,
     quit,
 };
 
@@ -108,6 +111,7 @@ pub const Palette = struct {
     loading: bool = true,
     calc: calc_view.Calculator,
     emoji: emoji_view.Picker = .{},
+    help: help_view.State = .{},
     /// Colour emoji, drawn once each.
     glyphs: Glyphs,
     /// For the strings of one frame's direct target detection.
@@ -192,12 +196,12 @@ pub const Palette = struct {
         var old = p.catalog;
         p.catalog = next;
         defer old.deinit();
-        // A typed target, the history, a sheet and the emoji picker list no apps.
-        if (p.direct != null or !p.calc.listsApps() or p.emoji.active()) return;
+        // A typed target, the history, a sheet, the emoji picker and the help list no apps.
+        if (p.direct != null or !p.calc.listsApps() or p.emoji.active() or p.help.showing) return;
 
         const query = try core.Query.init(p.gpa, p.text());
         defer query.deinit(p.gpa);
-        p.setResults(try p.search(query));
+        p.setResults(try p.search(query, p.text()));
         // A selected calculator row stays where it is.
         const offset = p.hitOffset();
         if (p.selected >= offset) {
@@ -249,6 +253,7 @@ pub const Palette = struct {
         emoji_view.leave(p);
         p.calc.clearView();
         p.freeBlock();
+        p.help.example = null;
         p.query.clear();
         try p.refresh();
         p.selected = 0;
@@ -300,6 +305,8 @@ pub const Palette = struct {
     pub const showingEmoji = emoji_view.showing;
     pub const setEmojiPrefs = emoji_view.setPrefs;
     pub const setInsertSupport = emoji_view.setSupport;
+    /// Whether the help was ever opened, read by the agent in the background.
+    pub const setHelpSeen = help_view.setSeen;
 
     // State.
 
@@ -331,6 +338,8 @@ pub const Palette = struct {
         try p.seen.appendSlice(p.gpa, p.text());
         const raw = p.seen.items;
         p.calc.clearView();
+        help_view.forgetExample(p, raw);
+        p.help.showing = false;
 
         // The emoji picker, open or opened by a leading `:`.
         if (try emoji_view.refresh(p, raw)) return;
@@ -347,6 +356,15 @@ pub const Palette = struct {
 
         // A path or link names one row; searching the apps for it would only
         // add noise.
+        // `?` alone lists what the palette understands.
+        if (help_view.opens(raw)) {
+            p.clearDirect();
+            p.setResults(&.{});
+            help_view.show(p);
+            p.reveal = .top;
+            return;
+        }
+
         _ = p.scratch.reset(.retain_capacity);
         if (try core.DirectTarget.detect(p.scratch.allocator(), p.io, p.home, raw)) |target| {
             try p.showDirect(target);
@@ -360,7 +378,7 @@ pub const Palette = struct {
         } else {
             const query = try core.Query.init(p.gpa, raw);
             defer query.deinit(p.gpa);
-            p.setResults(try p.search(query));
+            p.setResults(try p.search(query, raw));
         }
         p.selected = 0;
         p.reveal = .top;
@@ -390,16 +408,23 @@ pub const Palette = struct {
     }
 
     /// Searches the apps and commands. Commands only answer a query: the
-    /// empty search lists the apps alone.
-    fn search(p: *Palette, query: core.Query) ![]SearchHit {
+    /// empty search lists the apps alone. The "Hilfe" row answers only
+    /// `help` and `hilfe` (`raw`), and then comes first.
+    fn search(p: *Palette, query: core.Query, raw: []const u8) ![]SearchHit {
         const hits = try p.catalog.search(p.gpa, query);
-        if (!query.isEmpty()) return hits;
         var n: usize = 0;
-        for (hits) |h| if (!p.catalog.items[h.index].action.isCommand()) {
+        for (hits) |h| {
+            const action = p.catalog.items[h.index].action;
+            if (action == .open_help or (query.isEmpty() and action.isCommand())) continue;
             hits[n] = h;
             n += 1;
-        };
-        return p.gpa.realloc(hits, n);
+        }
+        const help = if (help_view.isHelpWord(raw)) p.catalog.find(.open_help) else null;
+        const i = help orelse return p.gpa.realloc(hits, n);
+        const out = try p.gpa.realloc(hits, n + 1);
+        @memmove(out[1..], out[0..n]);
+        out[0] = .{ .index = i, .score = 0 };
+        return out;
     }
 
     /// The rows the selection points into: the direct target while one is
@@ -414,6 +439,7 @@ pub const Palette = struct {
     }
 
     fn rowCount(p: *const Palette) usize {
+        if (p.help.showing) return help_view.rowCount();
         return p.hitOffset() + p.results.len;
     }
 
@@ -441,6 +467,7 @@ pub const Palette = struct {
 
     fn confirm(p: *Palette, with_task: bool) !void {
         if (p.emoji.active()) return emoji_view.confirm(p);
+        if (p.help.showing) return if (with_task) p.beep() else help_view.confirm(p);
         if (with_task) {
             if (!try calc_view.copySelected(p, .with_task)) p.beep();
             return;
@@ -468,8 +495,11 @@ pub const Palette = struct {
 
     fn activateSelected(p: *Palette) void {
         const it = p.selectedItem() orelse return;
-        if (it.action == .open_emoji_picker) return emoji_view.openFromSearch(p) catch p.beep();
-        p.emit(.{ .activate = it.action });
+        switch (it.action) {
+            .open_emoji_picker => return emoji_view.openFromSearch(p) catch p.beep(),
+            .open_help => return help_view.open(p) catch p.beep(),
+            else => p.emit(.{ .activate = it.action }),
+        }
     }
 
     fn activate(p: *Palette, result: usize) void {
@@ -698,6 +728,7 @@ pub const Palette = struct {
                 .width = .fill,
                 .bare = true,
             });
+            if (help_view.showsHint(p)) try help_view.hint(p, c);
             if (!std.mem.eql(u8, p.seen.items, p.text())) {
                 try p.refresh();
                 c.changed = true;
@@ -715,6 +746,7 @@ pub const Palette = struct {
         const box = ui.div(c).column().wFull().grow().clip();
         defer box.end();
         if (p.emoji.active()) return emoji_view.body(p, c);
+        if (p.help.showing) return help_view.body(p, c);
         if (p.calc.hasBody()) return calc_view.body(p, c);
         if (p.results.len == 0) return p.emptyState(c);
         p.hitList(c);
@@ -748,7 +780,11 @@ pub const Palette = struct {
         defer row.end();
         if (selected) _ = row.bg(theme.selection) else _ = row.hover(theme.surface);
         if (row.clicked()) p.activate(index);
-        if (it.action.isCommand()) commandTile(p, c, emoji_command_glyph) else iconTile(c, it);
+        switch (it.action) {
+            .open_help => help_view.symbolTile(c, help_view.query, true),
+            .open_emoji_picker => commandTile(p, c, emoji_command_glyph),
+            else => iconTile(c, it),
+        }
         {
             const col = ui.div(c).column().grow().minW(0).gap(1);
             defer col.end();
@@ -782,10 +818,17 @@ pub const Palette = struct {
         var hints: []const []const u8 = undefined;
         if (p.emoji.active()) {
             hints = emoji_view.footer(p, c, &hints_buf);
+        } else if (p.help.showing) {
+            hints = help_view.footer(p, c);
         } else if (calc_view.footer(p, c, &hints_buf)) |h| {
             hints = h;
+        } else if (help_view.tip(p)) |tip| {
+            ui.text(c, tip, .{ .size = 11, .color = theme.accent, .truncate = .ellipsis });
+            hints = p.searchHints(&hints_buf);
         } else {
-            ui.text(c, p.countLabel(c), .{ .size = 11, .color = theme.muted, .truncate = .ellipsis });
+            const label = p.countLabel(c);
+            const shown = if (help_view.origin(p)) |o| c.print("{s} · {s}", .{ label, o }) else label;
+            ui.text(c, shown, .{ .size = 11, .color = theme.muted, .truncate = .ellipsis });
             hints = p.searchHints(&hints_buf);
         }
         const row = ui.div(c).row().gap(14).itemsCenter();
@@ -804,7 +847,8 @@ pub const Palette = struct {
         var n: usize = 0;
         buf[n] = "↑↓ Navigieren";
         n += 1;
-        buf[n] = "↵ Öffnen";
+        const on_help = if (p.selectedItem()) |it| it.action == .open_help else false;
+        buf[n] = if (on_help) "↵ Hilfe öffnen" else "↵ Öffnen";
         n += 1;
         // A direct row replaces the app list, so the footer may only
         // advertise what the selection can actually do.
@@ -829,6 +873,7 @@ fn withCommands(gpa: Allocator, apps: []const Item) !Catalog {
         .keywords = &.{ "emoji", "emojis", "smiley", "smileys", "emoticon", "symbole" },
         .action = .open_emoji_picker,
     });
+    try items.append(gpa, help_view.command);
     return Catalog.init(gpa, items.items);
 }
 

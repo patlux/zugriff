@@ -10,15 +10,15 @@ const Action = @import("../core.zig").Action;
 
 const log = std.log.scoped(.launch);
 
-/// Performs a row's action. The emoji command never reaches here: the
-/// palette opens the picker itself.
+/// Performs a row's action. The emoji and help commands never reach here:
+/// the palette switches to them itself.
 pub fn perform(action: Action) void {
     switch (action) {
         .launch_application => |path| openApplication(path),
         .open_path => |path| openUrl(fileUrl(path)),
         .open_url => |url| if (webUrl(url)) |u| openUrl(u) else log.err("keine gültige Adresse: {s}", .{url}),
         .reveal_path => |path| reveal(path),
-        .open_emoji_picker => log.debug("Emoji-Befehl erreichte das Starten", .{}),
+        .open_emoji_picker, .open_help => log.debug("Befehl erreichte das Starten: {t}", .{action}),
     }
 }
 

@@ -13,6 +13,7 @@ test {
     _ = @import("app_scan.zig");
     _ = @import("control.zig");
     _ = @import("emoji_prefs.zig");
+    _ = @import("help_seen.zig");
     _ = @import("mac/apps.zig");
     _ = @import("mac/icons.zig");
     _ = @import("mac/hotkey.zig");
@@ -25,6 +26,8 @@ test {
     _ = @import("ui/glyphs.zig");
     _ = @import("ui/tests_palette.zig");
     _ = @import("ui/tests_emoji.zig");
+    _ = @import("ui/help_view.zig");
+    _ = @import("ui/tests_help.zig");
     _ = @import("daemon.zig");
     _ = @import("logging.zig");
     _ = @import("main.zig");

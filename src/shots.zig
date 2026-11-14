@@ -1,5 +1,6 @@
 //! The palette's states as pictures, rendered offscreen (`zig build shots`):
-//! the app list, the calculator, a sheet, the history and the emoji grid.
+//! the app list, the calculator, a sheet, the history, the emoji grid and
+//! the help.
 //! No window opens.
 const std = @import("std");
 const nanoui = @import("nanoui");
@@ -76,6 +77,13 @@ pub fn main(init: std.process.Init) !void {
         },
         .{ .name = "11-empty", .steps = &.{.{ .type = "xylofon" }} },
         .{ .name = "12-direct", .steps = &.{.{ .type = "https://example.com" }} },
+        .{ .name = "13-help", .steps = &.{ .{ .type = "?" }, down, down, down } },
+        .{ .name = "14-help-word", .steps = &.{.{ .type = "help" }} },
+        .{
+            .name = "15-help-tried",
+            .steps = &.{ .{ .type = "?" }, down, down, down, .enter },
+        },
+        .{ .name = "16-help-tip", .steps = &.{.help_tip} },
     };
 
     for (shots) |shot| {
@@ -108,6 +116,11 @@ pub fn main(init: std.process.Init) !void {
                 try p.showEmoji();
                 t.frame();
             },
+            .enter => t.key(.enter),
+            .help_tip => {
+                p.setHelpSeen(false);
+                t.frame();
+            },
         };
         t.settle(1);
         const path = try init.arena.allocator().print("{s}/{s}.png", .{ out_dir, shot.name });
@@ -121,4 +134,9 @@ const Step = union(enum) {
     paste: []const u8,
     chord: S,
     emoji,
+    enter,
+    /// The help was never opened: the footer tip shows.
+    help_tip,
 };
+
+const down: Step = .{ .chord = .{ .key = S.down } };

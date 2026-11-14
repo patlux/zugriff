@@ -26,6 +26,10 @@ getippt werden kann. Die App davor behält den Fokus.
   `⌘1`–`⌘9` zuletzt verwendete. Mit der Maus fügt ein Klick ein, Rechtsklick
   oder langes Drücken öffnet die Hauttöne. Einfügen braucht die Bedienungshilfen-Erlaubnis;
   ohne sie und bei aktivem Eingabeschutz kopiert `↵` nur.
+- Hilfe: `?` zeigt, was die Palette versteht, mit je einem Beispiel; `↵` setzt
+  das Beispiel ins Suchfeld. `help` und `hilfe` bringen die Zeile „Hilfe“ über
+  die App-Treffer. Im leeren Suchfeld steht rechts „? Hilfe“, und bis die
+  Hilfe einmal offen war, nennt der Fuß den Tipp dazu.
 - Steuerung des laufenden Agents über einen Unix-Socket.
 
 ## Bauen und starten
@@ -112,6 +116,9 @@ Beide Versionen teilen sich ihre Dateien:
 - Emoji-Einstellungen `~/Library/Application Support/zugriff/emoji.txt`
 - Icon-Cache `~/Library/Caches/tech.piparo.zugriff/icons`
 
+Nur die Zig-Version legt `~/Library/Application Support/zugriff/help-seen` an,
+sobald die Hilfe einmal offen war.
+
 Läuft der Rust-Agent, sieht die Zig-Version dessen Socket und zeigt nur dessen
 Palette an. Zum Ausprobieren den Rust-Agent beenden oder die Zig-Version mit
 eigenem `HOME` starten. Beide Binaries heißen `zugriff`.
@@ -176,7 +183,7 @@ Jeder Commit bringt ein Changeset mit; Ablauf und Release in `CONTRIBUTING.md`.
 ```text
 src/core/        Suche, Katalog, Emoji-Tabelle und Rechner, ohne Plattformcode
 src/mac/         Apps finden, Icons, Starten, Hotkeys, Panel, Einfügen (AppKit/Carbon)
-src/ui/          Palette, Rechner- und Emoji-Ansicht auf nanoui, Theme, Emoji-Bilder
+src/ui/          Palette, Rechner-, Emoji- und Hilfe-Ansicht auf nanoui, Theme, Emoji-Bilder
 src/agent.zig    Residenter Agent: Fenster und Hotkeys zuerst, dann Inhalte im Hintergrund
 src/daemon.zig   Daemon für --unload-mode process: Hotkeys und Socket, startet den UI-Prozess
 src/control.zig  Unix-Socket für show, hide, toggle, emoji, status und quit

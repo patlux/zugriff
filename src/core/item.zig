@@ -14,6 +14,9 @@ pub const Action = union(enum) {
     /// Switch the palette to the emoji picker: the search row "Emoji". The
     /// palette handles it itself; nothing is launched.
     open_emoji_picker,
+    /// Switch the palette to the help: the search row "Hilfe" that `help`
+    /// and `hilfe` bring up. The palette handles it itself.
+    open_help,
 
     pub fn eql(a: Action, b: Action) bool {
         if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
@@ -22,7 +25,7 @@ pub const Action = union(enum) {
             .open_path => |p| std.mem.eql(u8, p, b.open_path),
             .open_url => |u| std.mem.eql(u8, u, b.open_url),
             .reveal_path => |p| std.mem.eql(u8, p, b.reveal_path),
-            .open_emoji_picker => true,
+            .open_emoji_picker, .open_help => true,
         };
     }
 
@@ -30,13 +33,13 @@ pub const Action = union(enum) {
     pub fn path(a: Action) ?[]const u8 {
         return switch (a) {
             .launch_application, .open_path, .reveal_path => |p| p,
-            .open_url, .open_emoji_picker => null,
+            .open_url, .open_emoji_picker, .open_help => null,
         };
     }
 
     /// Rows that switch the palette instead of opening something.
     pub fn isCommand(a: Action) bool {
-        return a == .open_emoji_picker;
+        return a == .open_emoji_picker or a == .open_help;
     }
 
     fn dupe(a: Action, gpa: std.mem.Allocator) !Action {
@@ -46,6 +49,7 @@ pub const Action = union(enum) {
             .open_url => |u| .{ .open_url = try gpa.dupe(u8, u) },
             .reveal_path => |p| .{ .reveal_path = try gpa.dupe(u8, p) },
             .open_emoji_picker => .open_emoji_picker,
+            .open_help => .open_help,
         };
     }
 };

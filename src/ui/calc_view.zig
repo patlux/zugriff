@@ -13,6 +13,7 @@ const core = @import("../core.zig");
 const calc = core.calc;
 const theme = @import("theme.zig");
 const palette = @import("palette.zig");
+const help_view = @import("help_view.zig");
 const Palette = palette.Palette;
 const log = std.log.scoped(.calc_view);
 
@@ -299,6 +300,7 @@ pub fn footer(p: *Palette, c: *ui.Context, buf: *[6][]const u8) ?[]const []const
             "Einheiten"
         else
             "Rechner";
+        if (help_view.origin(p)) |o| label = c.print("{s} · {s}", .{ label, o });
         if (on_calculation) {
             var n: usize = 0;
             const alts = k.alternatives();
