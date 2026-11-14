@@ -406,7 +406,7 @@ pub const Agent = struct {
             log.info("zeigt {t}: Fenster neu angelegt in {d} µs", .{ view, nowUs() - start_us });
         } else log.info("zeigt {t}", .{view});
         a.show_started_us = start_us;
-        const drawn = panel.show(w);
+        panel.show(w);
         a.visible = true;
         // The icons the palette shows are wanted now; later shows have them.
         if (!a.icons_wanted) {
@@ -415,7 +415,10 @@ pub const Agent = struct {
         }
         // The list on screen stays until the scan answers; typing never waits.
         a.requestScan();
-        if (!drawn) w.redraw();
+        // Also after `panel.show` drew: restarting the display link there
+        // drops nanoui's request for the frames that follow (the emoji
+        // pictures load over several frames), and this asks for them again.
+        w.redraw();
     }
 
     fn hide(a: *Agent, why: []const u8) void {

@@ -110,15 +110,15 @@ fn roundContent(win: objc.Object) void {
 
 /// Centres the panel on the screen with the pointer, draws the palette's
 /// current state into it and makes it the key window without activating
-/// the app. True when the panel's first frame with the keys is drawn and
-/// on its way to the screen; false leaves it to the caller's redraw.
-pub fn show(w: *nanoui.Window) bool {
+/// the app. The caller still redraws afterwards: the frames that follow
+/// (the emoji pictures load over several) need that request.
+pub fn show(w: *nanoui.Window) void {
     const pool = objc.Pool.push();
     defer pool.pop();
     centerOnPointerScreen(w.nswindow);
     drawBeforeShow(w);
     w.show();
-    return drawWithKeys(w);
+    drawWithKeys(w);
 }
 
 /// A hidden panel still holds the frame it showed last (the emoji grid
@@ -158,9 +158,9 @@ fn drawBeforeShow(w: *nanoui.Window) void {
 /// transaction, and hands that transaction to the WindowServer at once:
 /// it would otherwise wait until the run loop next waits, which in a freshly
 /// started UI process is after its whole first turn.
-fn drawWithKeys(w: *nanoui.Window) bool {
-    const s = w.surface orelse return false;
-    if (!w.isVisible() or s.in_frame or s.dead) return false;
+fn drawWithKeys(w: *nanoui.Window) void {
+    const s = w.surface orelse return;
+    if (!w.isVisible() or s.in_frame or s.dead) return;
     if (s.released) {
         s.released = false;
         s.renderer.resize(s.size, s.scale);
@@ -171,9 +171,8 @@ fn drawWithKeys(w: *nanoui.Window) bool {
     s.is_visible = true;
     const drawn = s.resizeInTransaction();
     if (had_link) s.startLink();
-    if (!drawn) return false;
+    if (!drawn) return std.log.warn("Palette mit Tastatur nicht gleich gezeichnet; der Display-Link zeichnet sie", .{});
     objc.msg(void, objc.class("CATransaction"), "flush", .{});
-    return true;
 }
 
 pub fn hide(w: *nanoui.Window) void {
