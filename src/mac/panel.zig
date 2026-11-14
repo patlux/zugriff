@@ -12,6 +12,8 @@ const objc = nanoui.objc;
 /// Logical size of the palette.
 pub const width: f64 = 640;
 pub const height: f64 = 420;
+/// Corner radius of the panel: the one nanoui gives a popover's content view.
+pub const corner_radius: f64 = 12;
 
 /// The window options nanoui creates the panel with.
 pub fn options(
@@ -91,6 +93,19 @@ fn installBackdrop(w: *nanoui.Window) void {
     objc.msg(void, effect, "setState:", .{@as(objc.NSInteger, 1)}); // active
     surface.attachBackdrop(effect);
     objc.release(effect);
+    roundContent(w.nswindow);
+}
+
+/// `attachBackdrop` puts a new host view in as the content view. nanoui
+/// rounded the old one for the popover; without the same on the host, the
+/// blur and the window shadow keep square corners around the rounded frame.
+fn roundContent(win: objc.Object) void {
+    const content = objc.msg(?objc.Object, win, "contentView", .{}) orelse return;
+    objc.msg(void, content, "setWantsLayer:", .{objc.YES});
+    const layer = objc.msg(?objc.Object, content, "layer", .{}) orelse return;
+    objc.msg(void, layer, "setCornerRadius:", .{corner_radius});
+    objc.msg(void, layer, "setMasksToBounds:", .{objc.YES});
+    objc.msg(void, win, "invalidateShadow", .{});
 }
 
 /// Centres the panel on the screen with the pointer and makes it the key
