@@ -122,6 +122,14 @@ die Rust-Version `zugriff`. Es gibt noch kein Install-Target und keinen LaunchAg
   ab; das sieht auch in anderen Apps so aus.
 - Größe: etwa 4,3 MB in ReleaseSafe gegenüber etwa 12 MB der Rust-Binary; die
   Emoji-Tabelle ist in beiden einkompiliert.
+- Apple Intelligence: AppKit meldet unter macOS 27 jede App bei App Intents
+  an und bereitet die Writing Tools vor; das lädt rund 500 Systembibliotheken
+  bis hin zu WebKit, die die Palette nicht braucht. `src/mac/intelligence.zig`
+  ersetzt diese sechs privaten Methoden vor dem Start durch leere, wenn ihre
+  Signatur passt. Gemessen auf macOS 27.2: 658 statt 1166 geladene Bibliotheken
+  nach dem Start, Start bis Socket etwa 129 statt 139 ms, Öffnen im Modus
+  `process` etwa 119 statt 130 ms, der Daemon 7,9 statt 9,0 MB. Texteingabe
+  (Akzente, Eingabemethoden) bleibt unverändert.
 
 ## Entwicklung
 

@@ -11,6 +11,7 @@ const build_options = @import("build_options");
 const control = @import("control.zig");
 const sync = @import("sync.zig");
 const agent = @import("agent.zig");
+const intelligence = @import("mac/intelligence.zig");
 
 const log = std.log.scoped(.zugriff);
 
@@ -39,6 +40,7 @@ pub const Daemon = struct {
         var exe_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const exe_len = try std.process.executablePath(io, &exe_buf);
 
+        intelligence.optOut();
         const app = try nanoui.App.create(
             init,
             .{ .name = "Zugriff", .quit_on_last_window_closed = false, .activation = .accessory },

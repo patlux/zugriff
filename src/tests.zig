@@ -19,6 +19,7 @@ test {
     _ = @import("mac/launch.zig");
     _ = @import("mac/panel.zig");
     _ = @import("mac/insert.zig");
+    _ = @import("mac/intelligence.zig");
     _ = @import("ui/theme.zig");
     _ = @import("ui/glyphs.zig");
     _ = @import("ui/tests_palette.zig");

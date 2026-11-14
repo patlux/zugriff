@@ -24,6 +24,7 @@ const hotkey = @import("mac/hotkey.zig");
 const insert = @import("mac/insert.zig");
 const launch = @import("mac/launch.zig");
 const panel = @import("mac/panel.zig");
+const intelligence = @import("mac/intelligence.zig");
 const Palette = ui_palette.Palette;
 const InsertSupport = ui_palette.InsertSupport;
 
@@ -119,6 +120,7 @@ pub const Agent = struct {
             return;
         }
 
+        intelligence.optOut();
         const app = try nanoui.App.create(
             init,
             .{ .name = "Zugriff", .quit_on_last_window_closed = false, .activation = .accessory },
