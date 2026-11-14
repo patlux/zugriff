@@ -32,9 +32,9 @@ Die Toolchain kommt aus `mise.toml` (Zig 0.17.1, ziglint).
 
 ```sh
 mise install
-mise x -- zig build                         # zig-out/bin/zugriff
+mise x -- zig build                         # zig-out/bin/zugriff-zig
 mise x -- zig build -Doptimize=ReleaseSafe  # für den Alltag
-./zig-out/bin/zugriff run --hotkey alt+space
+./zig-out/bin/zugriff-zig run --hotkey alt+space
 ```
 
 Standard-Hotkeys sind `Cmd+Space` (Palette) und `Ctrl+Cmd+Space` (Emoji). Lehnt
@@ -42,18 +42,20 @@ macOS einen Hotkey ab, weil er schon vergeben ist, schreibt der Agent das ins
 Log und läuft ohne ihn weiter; dann Spotlight umstellen oder `--hotkey` nutzen.
 
 ```text
-zugriff                        Palette starten (Cmd+Space, Ctrl+Cmd+Space)
-zugriff run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
+zugriff-zig                    Palette starten (Cmd+Space, Ctrl+Cmd+Space)
+zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
                                Palette mit eigenen Hotkeys starten
-zugriff show | hide | toggle   Laufende Palette anzeigen, ausblenden, umschalten
-zugriff emoji                  Emoji-Auswahl anzeigen
-zugriff quit                   Laufende Palette beenden
-zugriff status                 Version und Einfüge-Erlaubnis der laufenden Palette
-zugriff apps [query]           Installierte Apps suchen (ohne UI)
-zugriff emojis [suche]         Emoji suchen wie in der Palette (ohne UI)
-zugriff icons                  App-Icons in den Cache rendern (ohne UI)
-zugriff calc <aufgabe>         Aufgabe rechnen wie in der Palette (ohne UI)
-zugriff --version              Version
+zugriff-zig show               Laufende Palette anzeigen
+zugriff-zig hide               Laufende Palette ausblenden
+zugriff-zig toggle             Laufende Palette umschalten
+zugriff-zig emoji              Emoji-Auswahl anzeigen
+zugriff-zig quit               Laufende Palette beenden
+zugriff-zig status             Version und Einfüge-Erlaubnis der laufenden Palette
+zugriff-zig apps [query]       Installierte Apps suchen (ohne UI)
+zugriff-zig emojis [suche]     Emoji suchen wie in der Palette (ohne UI)
+zugriff-zig icons              App-Icons in den Cache rendern (ohne UI)
+zugriff-zig calc <aufgabe>     Aufgabe rechnen wie in der Palette (ohne UI)
+zugriff-zig --version          Version
 ```
 
 ## Neben der Rust-Version
@@ -64,9 +66,10 @@ Beide Versionen teilen sich ihre Dateien:
 - Emoji-Einstellungen `~/Library/Application Support/zugriff/emoji.txt`
 - Icon-Cache `~/Library/Caches/tech.piparo.zugriff/icons`
 
-Läuft der Rust-Agent, sieht `zugriff` (Zig) dessen Socket und zeigt nur dessen
+Läuft der Rust-Agent, sieht `zugriff-zig` dessen Socket und zeigt nur dessen
 Palette an. Zum Ausprobieren den Rust-Agent beenden oder die Zig-Version mit
-eigenem `HOME` starten. Es gibt noch kein Install-Target und keinen LaunchAgent.
+eigenem `HOME` starten. In der Prozessliste heißt die Zig-Version `zugriff-zig`,
+die Rust-Version `zugriff`. Es gibt noch kein Install-Target und keinen LaunchAgent.
 
 ## Unterschiede
 

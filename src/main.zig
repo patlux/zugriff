@@ -13,20 +13,20 @@ const help =
     \\Zugriff — schnelle native Command Palette für macOS
     \\
     \\Befehle:
-    \\  zugriff                        Palette starten (Cmd+Space, Ctrl+Cmd+Space)
-    \\  zugriff run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
+    \\  zugriff-zig                    Palette starten (Cmd+Space, Ctrl+Cmd+Space)
+    \\  zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
     \\                                 Palette mit eigenen Hotkeys starten
-    \\  zugriff show                   Laufende Palette anzeigen
-    \\  zugriff hide                   Laufende Palette ausblenden
-    \\  zugriff toggle                 Laufende Palette umschalten
-    \\  zugriff emoji                  Emoji-Auswahl anzeigen (Ctrl+Cmd+Space)
-    \\  zugriff quit                   Laufende Palette beenden
-    \\  zugriff status                 Version und Einfüge-Erlaubnis der laufenden Palette
-    \\  zugriff apps [query]           Installierte Apps suchen (ohne UI)
-    \\  zugriff emojis [suche]         Emoji suchen wie in der Palette (ohne UI)
-    \\  zugriff icons                  App-Icons in den Cache rendern (ohne UI)
-    \\  zugriff calc <aufgabe>         Aufgabe rechnen wie in der Palette (ohne UI)
-    \\  zugriff --version              Version
+    \\  zugriff-zig show               Laufende Palette anzeigen
+    \\  zugriff-zig hide               Laufende Palette ausblenden
+    \\  zugriff-zig toggle             Laufende Palette umschalten
+    \\  zugriff-zig emoji              Emoji-Auswahl anzeigen (Ctrl+Cmd+Space)
+    \\  zugriff-zig quit               Laufende Palette beenden
+    \\  zugriff-zig status             Version und Einfüge-Erlaubnis der laufenden Palette
+    \\  zugriff-zig apps [query]       Installierte Apps suchen (ohne UI)
+    \\  zugriff-zig emojis [suche]     Emoji suchen wie in der Palette (ohne UI)
+    \\  zugriff-zig icons              App-Icons in den Cache rendern (ohne UI)
+    \\  zugriff-zig calc <aufgabe>     Aufgabe rechnen wie in der Palette (ohne UI)
+    \\  zugriff-zig --version          Version
     \\
     \\Hotkey-Beispiele: cmd+space, ctrl+cmd+space, alt+space, ctrl+shift+space, cmd+k
     \\
@@ -50,7 +50,7 @@ pub fn main(init: std.process.Init) !void {
     const rest = if (args.items.len > 0) args.items[1..] else args.items;
     if (std.mem.eql(u8, command, "run")) {
         const keys = parseRun(rest) catch |e| {
-            std.debug.print("zugriff: {s}\n", .{switch (e) {
+            std.debug.print("zugriff-zig: {s}\n", .{switch (e) {
                 error.MissingValue => "die Option braucht einen Wert",
                 error.UnknownOption => "unbekannte Option für `run`",
             }});
@@ -61,7 +61,7 @@ pub fn main(init: std.process.Init) !void {
     if (control.Command.parse(command) != null or std.mem.eql(u8, command, "status")) {
         const socket = try control.socketPath(arena, home);
         const answer = control.request(arena, io, socket, command) catch |e| {
-            std.debug.print("zugriff: Zugriff läuft nicht ({t}); starte ihn mit `zugriff`\n", .{e});
+            std.debug.print("zugriff-zig: Zugriff läuft nicht ({t}); starte ihn mit `zugriff-zig`\n", .{e});
             std.process.exit(1);
         };
         if (std.mem.eql(u8, command, "status")) try out.print("{s}\n", .{answer});

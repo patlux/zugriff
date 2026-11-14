@@ -135,7 +135,7 @@ fn writeAtomically(io: std.Io, path: []const u8, png: []const u8) !void {
     const dir = std.Io.Dir.path.dirname(path) orelse return error.NoDirectory;
     try files.ensureDir(io, dir);
     // A process-specific temporary name keeps the rename atomic even when the
-    // agent and a concurrent `zugriff icons` render the same bundle.
+    // agent and a concurrent `zugriff-zig icons` render the same bundle.
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const tmp = try std.mem.print(&buf, "{s}.{d}.tmp", .{ path, std.c.getpid() });
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = tmp, .data = png });
