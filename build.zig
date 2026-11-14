@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) void {
     }) });
     exe.root_module.addOptions("build_options", options);
     linkFrameworks(exe.root_module);
+    dropUnusedDylibs(exe);
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
@@ -37,6 +38,7 @@ pub fn build(b: *std.Build) void {
     }) });
     tests.root_module.addOptions("build_options", options);
     linkFrameworks(tests.root_module);
+    dropUnusedDylibs(tests);
     const test_step = b.step("test", "Run the tests (offscreen, no window)");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
@@ -50,6 +52,7 @@ pub fn build(b: *std.Build) void {
     }) });
     shots.root_module.addOptions("build_options", options);
     linkFrameworks(shots.root_module);
+    dropUnusedDylibs(shots);
     const shoot = b.addRunArtifact(shots);
     shoot.has_side_effects = true;
     const pictures = shoot.addOutputDirectoryArg2("shots", .{});
@@ -66,4 +69,14 @@ pub fn build(b: *std.Build) void {
 fn linkFrameworks(m: *std.Build.Module) void {
     m.linkFramework("Carbon", .{});
     m.linkFramework("ApplicationServices", .{});
+}
+
+/// nanoui links every framework it can use, WebKit for its web view among
+/// them. The palette has no web view, and WebKit alone makes dyld load 35
+/// more images at every start (JavaScriptCore, WebCore, …). Drop each
+/// framework no symbol is imported from; the ones nanoui reaches only
+/// through the Objective-C runtime (Foundation, UniformTypeIdentifiers)
+/// come with AppKit anyway.
+fn dropUnusedDylibs(c: *std.Build.Step.Compile) void {
+    c.dead_strip_dylibs = true;
 }
