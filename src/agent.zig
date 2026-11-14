@@ -60,6 +60,8 @@ const icons_per_batch = 6;
 const icon_batch_pause_ms = 2;
 /// Icon cache files older than this are removed after the first scan.
 const icon_max_age_s = 30 * 24 * 60 * 60;
+/// A show within this long of the last scan request does not ask again.
+const rescan_gap_ms = 2000;
 
 const View = enum { apps, emoji };
 
@@ -85,6 +87,8 @@ pub const Agent = struct {
     unload_due_ms: i64 = 0,
     /// When the last show began (`nowUs`), until the panel has the keys.
     show_started_us: ?i64 = null,
+    /// When the last app scan was asked for (`nowMs`).
+    scan_asked_ms: ?i64 = null,
     palette: Palette = undefined,
     visible: bool = false,
     /// The first show wants the icons that are not cached yet.
@@ -120,6 +124,7 @@ pub const Agent = struct {
             .{ .name = "Zugriff", .quit_on_last_window_closed = false, .activation = .accessory },
         );
         defer app.destroy();
+        log.info("App angelegt", .{});
         const agent = try gpa.create(Agent);
         defer gpa.destroy(agent);
         agent.* = .{ .gpa = gpa, .io = io, .home = home, .app = app, .settings = settings };
@@ -134,8 +139,7 @@ pub const Agent = struct {
 
         // Window and hot keys first.
         _ = try agent.openWindow();
-        log.info("panel configured", .{});
-        agent.scheduleUnload();
+        log.info("Fenster angelegt", .{});
         if (!app.flags.hidden) {
             if (settings.hotkeys) registerHotkeys(settings, agent, togglePressed, emojiPressed);
             agent.server = try control.Server.bind(
@@ -145,14 +149,14 @@ pub const Agent = struct {
             );
             try agent.server.?.spawn();
         }
-        // The command the daemon started this UI process for, once it runs.
-        if (settings.then != null) nanoui.App.after(0, agent, runThen);
-
         // Content next, off the main thread.
         agent.scanner = .{ .ctx = agent, .scan = scan, .deliver = delivered };
         try agent.scanner.start();
         agent.scanning = true;
-        agent.scanner.rescan();
+        agent.requestScan();
+        // The command the daemon started this UI process for, at once: the
+        // panel shows while the scan runs and the run loop starts.
+        if (settings.then) |c| agent.handle(c) else agent.scheduleUnload();
         const prefs_file = try emoji_prefs.path(init.arena.allocator(), home);
         if (prefs_file) |file| {
             agent.prefs_writer = .{ .io = io, .file = file };
@@ -239,9 +243,13 @@ pub const Agent = struct {
         log.info("Palette entladen; der nächste Aufruf legt sie neu an", .{});
     }
 
-    fn runThen(ctx: ?*anyopaque) callconv(.c) void {
-        const a: *Agent = @ptrCast(@alignCast(ctx.?));
-        a.handle(a.settings.then orelse return);
+    /// Asks the scan thread for a fresh app list, unless one was asked for
+    /// a moment ago (a UI process that starts and shows at once).
+    fn requestScan(a: *Agent) void {
+        const now = nowMs(a);
+        if (a.scan_asked_ms) |t| if (now - t < rescan_gap_ms) return;
+        a.scan_asked_ms = now;
+        a.scanner.rescan();
     }
 
     fn togglePressed(ctx: *anyopaque) void {
@@ -324,7 +332,7 @@ pub const Agent = struct {
             a.queuePendingIcons();
         }
         // The list on screen stays until the scan answers; typing never waits.
-        a.scanner.rescan();
+        a.requestScan();
         // `:` opens the emoji picker from the app search too, so every show asks.
         const support: InsertSupport = if (!insert.isTrusted())
             .needs_permission

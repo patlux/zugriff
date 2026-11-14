@@ -3,7 +3,7 @@
 //! palette runs in a UI process (`zugriff-zig ui`, the agent in `agent.zig`)
 //! the daemon starts on the first show; that process ends itself after the
 //! idle time, so between uses only the daemon stays in memory. A show then
-//! waits for the UI process to start (about 100 ms).
+//! waits for the UI process to start (about 150 ms or more).
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const nanoui = @import("nanoui");
