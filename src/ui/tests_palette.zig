@@ -217,6 +217,20 @@ test "a typed app name opens the app" {
     try expectLaunch(h.fake.nextActivation(), "Zed");
 }
 
+test "keys typed before the panel had the keyboard join the query" {
+    const apps = Apps.init(&.{ "Zoom", "Zotero" });
+    defer apps.deinit();
+    var h: Harness = undefined;
+    try h.init(apps.items);
+    defer h.deinit();
+    try h.palette.typeAhead("zot");
+    h.t.frame();
+    h.typeText("e");
+    try testing.expectEqualStrings("zote", h.palette.text());
+    h.enter();
+    try expectLaunch(h.fake.nextActivation(), "Zotero");
+}
+
 test "the arrows choose the app" {
     const apps = Apps.init(&.{ "Zoom", "Zotero" });
     defer apps.deinit();

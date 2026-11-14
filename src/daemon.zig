@@ -3,7 +3,9 @@
 //! palette runs in a UI process (`zugriff-zig ui`, the agent in `agent.zig`)
 //! the daemon starts on the first show; that process ends itself after the
 //! idle time, so between uses only the daemon stays in memory. A show then
-//! waits for the UI process to start (about 150 ms or more).
+//! waits for the UI process to start (about 150 ms or more); keys typed in
+//! that time are kept by the key catcher (`mac/catcher.zig`) and handed to
+//! the UI process.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const nanoui = @import("nanoui");
@@ -11,9 +13,14 @@ const build_options = @import("build_options");
 const control = @import("control.zig");
 const sync = @import("sync.zig");
 const agent = @import("agent.zig");
+const Catcher = @import("mac/catcher.zig").Catcher;
 const intelligence = @import("mac/intelligence.zig");
 
 const log = std.log.scoped(.zugriff);
+
+/// A UI process that has not asked for the typed keys after this long has
+/// failed to start; the catcher goes so the keys reach the app in front.
+const catch_timeout_ms = 3000;
 
 pub const Daemon = struct {
     gpa: Allocator,
@@ -28,6 +35,9 @@ pub const Daemon = struct {
     server: ?control.Server = null,
     commands_mutex: sync.Mutex = .{},
     commands: std.ArrayList(control.Command) = .empty,
+    catcher: Catcher = .{},
+    /// When the catcher came to the front (`nowMs`).
+    catch_started_ms: i64 = 0,
 
     pub fn run(gpa: Allocator, io: std.Io, home: ?[]const u8, init: std.process.Init, settings: agent.Settings) !void {
         const arena = init.arena.allocator();
@@ -59,7 +69,11 @@ pub const Daemon = struct {
         defer d.shutdown();
 
         agent.registerHotkeys(settings, d, palettePressed, emojiPressed);
-        d.server = try control.Server.bind(io, socket, .{ .ctx = d, .command = commandFromSocket, .status = status });
+        d.server = try control.Server.bind(
+            io,
+            socket,
+            .{ .ctx = d, .command = commandFromSocket, .status = status, .typed = typed },
+        );
         try d.server.?.spawn();
         log.info("Daemon bereit; die Palette startet beim ersten Aufruf", .{});
         try app.run();
@@ -129,10 +143,36 @@ pub const Daemon = struct {
                 if (d.forward(c)) |_| return else |_| {}
                 // Started a moment ago and not listening yet: this press goes.
                 if (d.childRunning()) return log.info("UI-Prozess startet noch; {t} übergangen", .{c});
-                // Nothing on screen: a toggle shows.
+                // Nothing on screen: a toggle shows. Keys typed until the UI
+                // process has the keyboard go to the catcher, not the app in front.
+                d.catcher.begin();
+                d.catch_started_ms = agent.nowMs(d);
+                nanoui.App.after(catch_timeout_ms, d, endStaleCatch);
                 d.spawn(if (c == .toggle) .show else c);
             },
         }
+    }
+
+    /// From the socket's thread: the UI process has the keyboard and takes
+    /// the keys typed since the hot key; the catcher goes on the main thread.
+    fn typed(ctx: *anyopaque, buf: []u8) []const u8 {
+        const d: *Daemon = @ptrCast(@alignCast(ctx));
+        const text = d.catcher.take(buf);
+        _ = nanoui.App.onMain(d, endCatch);
+        log.info("an UI-Prozess übergeben: {d} getippte Bytes", .{text.len});
+        return text;
+    }
+
+    fn endCatch(ctx: ?*anyopaque) callconv(.c) void {
+        const d: *Daemon = @ptrCast(@alignCast(ctx.?));
+        d.catcher.end();
+    }
+
+    fn endStaleCatch(ctx: ?*anyopaque) callconv(.c) void {
+        const d: *Daemon = @ptrCast(@alignCast(ctx.?));
+        if (!d.catcher.isCatching() or agent.nowMs(d) - d.catch_started_ms < catch_timeout_ms) return;
+        log.warn("UI-Prozess hat die getippten Tasten nicht abgeholt; Tastenfang beendet", .{});
+        d.catcher.end();
     }
 
     fn forward(d: *Daemon, c: control.Command) !void {
@@ -172,6 +212,7 @@ pub const Daemon = struct {
         };
         const started_us = agent.nowUs();
         d.child = std.process.spawn(d.io, .{ .argv = &argv }) catch |e| {
+            d.catcher.end();
             return log.err("UI-Prozess lässt sich nicht starten: {t}", .{e});
         };
         log.info("UI-Prozess gestartet (pid {d}) in {d} µs", .{ d.child.?.id.?, agent.nowUs() - started_us });

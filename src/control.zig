@@ -25,6 +25,9 @@ pub const Command = enum {
 /// Answered by the listener thread itself, not the main thread: the status
 /// must also come when the main thread is busy.
 const status_request = "status";
+/// From the UI process to the daemon (`--unload-mode process`): the keys
+/// typed while the UI process started, as one line of text.
+pub const typed_request = "typed";
 
 /// `~/Library/Application Support/zugriff/control.sock`.
 pub fn socketPath(a: std.mem.Allocator, home: ?[]const u8) ![]const u8 {
@@ -63,6 +66,8 @@ pub const Handler = struct {
     command: *const fn (ctx: *anyopaque, c: Command) void,
     /// The status line, written into `buf`.
     status: *const fn (ctx: *anyopaque, buf: []u8) []const u8,
+    /// The daemon's typed-ahead text, written into `buf`; null elsewhere.
+    typed: ?*const fn (ctx: *anyopaque, buf: []u8) []const u8 = null,
 };
 
 pub const Server = struct {
@@ -115,6 +120,8 @@ pub const Server = struct {
             break :blk "ok";
         } else if (std.mem.eql(u8, line, status_request))
             s.handler.status(s.handler.ctx, &status_buf)
+        else if (std.mem.eql(u8, line, typed_request) and s.handler.typed != null)
+            s.handler.typed.?(s.handler.ctx, &status_buf)
         else
             "unknown command";
         var wbuf: [512]u8 = undefined;

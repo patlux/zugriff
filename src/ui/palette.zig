@@ -251,6 +251,14 @@ pub const Palette = struct {
         p.reveal = .top;
     }
 
+    /// Keys typed before the panel had the keyboard (a UI process that was
+    /// still starting), added to the query; the next frame searches.
+    pub fn typeAhead(p: *Palette, typed: []const u8) !void {
+        const joined = try std.mem.concat(p.gpa, u8, &.{ p.text(), typed });
+        defer p.gpa.free(joined);
+        p.query.set(joined);
+    }
+
     /// The panel was closed to free memory; its window and caches go.
     pub fn unloaded(p: *Palette) void {
         p.glyphs.trim(0);

@@ -73,6 +73,9 @@ von zwei Arten (`--unload-mode`):
   und startet die Palette als eigenen UI-Prozess (`zugriff-zig ui`, intern).
   Der UI-Prozess beendet sich nach der Ruhezeit ganz; die letzte Rechnung
   geht dabei verloren, der Emoji-Verlauf liegt in der Datei und bleibt.
+  Was nach dem Hotkey getippt wird, solange der UI-Prozess noch startet,
+  nimmt ein unsichtbares Fangfenster des Daemons an; die Palette übernimmt
+  es, sobald sie vorne ist.
 
 ```sh
 ./zig-out/bin/zugriff-zig run --hotkey alt+space --unload-after 60

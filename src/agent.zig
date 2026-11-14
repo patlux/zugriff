@@ -90,6 +90,10 @@ pub const Agent = struct {
     show_started_us: ?i64 = null,
     /// When the last app scan was asked for (`nowMs`).
     scan_asked_ms: ?i64 = null,
+    /// A UI process the daemon started (`--unload-mode process`): the
+    /// daemon's socket, where the keys typed during the start wait until
+    /// the panel has the keyboard.
+    daemon_socket: ?[]const u8 = null,
     palette: Palette = undefined,
     visible: bool = false,
     /// The first show wants the icons that are not cached yet.
@@ -158,7 +162,10 @@ pub const Agent = struct {
         agent.requestScan();
         // The command the daemon started this UI process for, at once: the
         // panel shows while the scan runs and the run loop starts.
-        if (settings.then) |c| agent.handle(c) else agent.scheduleUnload();
+        if (settings.then) |c| {
+            if (settings.socket != null) agent.daemon_socket = try control.socketPath(init.arena.allocator(), home);
+            agent.handle(c);
+        } else agent.scheduleUnload();
         const prefs_file = try emoji_prefs.path(init.arena.allocator(), home);
         if (prefs_file) |file| {
             agent.prefs_writer = .{ .io = io, .file = file };
@@ -243,6 +250,18 @@ pub const Agent = struct {
         a.palette.unloaded();
         w.close();
         log.info("Palette entladen; der nächste Aufruf legt sie neu an", .{});
+    }
+
+    fn takeTypedAhead(a: *Agent, socket: []const u8) void {
+        a.daemon_socket = null;
+        var buf: [512]u8 = undefined;
+        var fba: std.heap.FixedBufferAllocator = .init(&buf);
+        const text = control.request(fba.allocator(), a.io, socket, control.typed_request) catch |e|
+            return log.warn("getippte Tasten nicht abgeholt: {t}", .{e});
+        if (text.len == 0) return;
+        a.palette.typeAhead(text) catch |e| return log.warn("getippte Tasten nicht übernommen: {t}", .{e});
+        log.info("vor dem Start getippt und übernommen: {d} Bytes", .{text.len});
+        a.redraw();
     }
 
     /// Asks the scan thread for a fresh app list, unless one was asked for
@@ -365,6 +384,9 @@ pub const Agent = struct {
             if (a.show_started_us) |t|
                 log.info("Palette vorne mit Tastatur nach {d} ms", .{@divTrunc(nowUs() - t, 1000)});
             a.show_started_us = null;
+            // Keys typed later come here; those before wait at the daemon.
+            // They go into the query before the queued key events run.
+            if (a.daemon_socket) |socket| a.takeTypedAhead(socket);
             return;
         }
         if (!a.visible) return;
