@@ -29,7 +29,7 @@ test "a question mark lists the topics with their examples" {
         try testing.expect(h.t.hasText(t.title));
         try testing.expect(h.t.hasText(t.example));
     }
-    try testing.expect(h.t.hasText("Hilfe · 7 Themen"));
+    try testing.expect(h.t.hasText("Hilfe · 7 Themen · Version " ++ @import("build_options").version));
     try testing.expect(h.t.hasText("↵ Ausprobieren"));
     // All seven rows fit above the footer, no scrolling.
     const last = h.t.findText("Tasten") orelse return error.NoRow;

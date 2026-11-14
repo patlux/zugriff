@@ -8,6 +8,7 @@
 //! too ("help" finds Tips): they only bring up a "Hilfe" row above the apps.
 //! The topics are constant data; nothing is loaded for them.
 const std = @import("std");
+const build_options = @import("build_options");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
 const core = @import("../core.zig");
@@ -201,7 +202,11 @@ pub fn footer(p: *Palette, c: *ui.Context) []const []const u8 {
     return &.{ "↑↓ Navigieren", "↵ Ausprobieren", "esc Schließen" };
 }
 
-const footer_label = std.fmt.comptimePrint("Hilfe · {d} Themen", .{topics.len});
+/// The topics and the version of the running binary.
+pub const footer_label = std.fmt.comptimePrint(
+    "Hilfe · {d} Themen · Version {s}",
+    .{ topics.len, build_options.version },
+);
 
 /// What the footer adds to its label while the query is an example from
 /// the help (Z1).
