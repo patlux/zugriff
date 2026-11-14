@@ -32,9 +32,9 @@ Die Toolchain kommt aus `mise.toml` (Zig 0.17.1, ziglint).
 
 ```sh
 mise install
-mise x -- zig build                         # zig-out/bin/zugriff-zig
+mise x -- zig build                         # zig-out/bin/zugriff
 mise x -- zig build -Doptimize=ReleaseSafe  # für den Alltag
-./zig-out/bin/zugriff-zig run --hotkey alt+space
+./zig-out/bin/zugriff run --hotkey alt+space
 ```
 
 Standard-Hotkeys sind `Cmd+Space` (Palette) und `Ctrl+Cmd+Space` (Emoji). Lehnt
@@ -42,21 +42,21 @@ macOS einen Hotkey ab, weil er schon vergeben ist, schreibt der Agent das ins
 Log und läuft ohne ihn weiter; dann Spotlight umstellen oder `--hotkey` nutzen.
 
 ```text
-zugriff-zig                    Palette starten (Cmd+Space, Ctrl+Cmd+Space)
-zugriff-zig run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
-                [--unload-after <s|never>] [--unload-mode window|process]
+zugriff                        Palette starten (Cmd+Space, Ctrl+Cmd+Space)
+zugriff run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
+            [--unload-after <s|never>] [--unload-mode window|process]
                                Palette mit eigenen Hotkeys starten, optional entladen
-zugriff-zig show               Laufende Palette anzeigen
-zugriff-zig hide               Laufende Palette ausblenden
-zugriff-zig toggle             Laufende Palette umschalten
-zugriff-zig emoji              Emoji-Auswahl anzeigen
-zugriff-zig quit               Laufende Palette beenden
-zugriff-zig status             Version und Einfüge-Erlaubnis der laufenden Palette
-zugriff-zig apps [query]       Installierte Apps suchen (ohne UI)
-zugriff-zig emojis [suche]     Emoji suchen wie in der Palette (ohne UI)
-zugriff-zig icons              App-Icons in den Cache rendern (ohne UI)
-zugriff-zig calc <aufgabe>     Aufgabe rechnen wie in der Palette (ohne UI)
-zugriff-zig --version          Version
+zugriff show                   Laufende Palette anzeigen
+zugriff hide                   Laufende Palette ausblenden
+zugriff toggle                 Laufende Palette umschalten
+zugriff emoji                  Emoji-Auswahl anzeigen
+zugriff quit                   Laufende Palette beenden
+zugriff status                 Version und Einfüge-Erlaubnis der laufenden Palette
+zugriff apps [query]           Installierte Apps suchen (ohne UI)
+zugriff emojis [suche]         Emoji suchen wie in der Palette (ohne UI)
+zugriff icons                  App-Icons in den Cache rendern (ohne UI)
+zugriff calc <aufgabe>         Aufgabe rechnen wie in der Palette (ohne UI)
+zugriff --version              Version
 ```
 
 ## Speicher
@@ -70,7 +70,7 @@ von zwei Arten (`--unload-mode`):
   nächsten Aufruf neu angelegt. Eingabe, letzte Rechnung und Emoji-Verlauf
   bleiben erhalten.
 - `process`: Ein kleiner Daemon (`src/daemon.zig`) hält Hotkeys und Socket
-  und startet die Palette als eigenen UI-Prozess (`zugriff-zig ui`, intern).
+  und startet die Palette als eigenen UI-Prozess (`zugriff ui`, intern).
   Der UI-Prozess beendet sich nach der Ruhezeit ganz; die letzte Rechnung
   geht dabei verloren, der Emoji-Verlauf liegt in der Datei und bleibt.
   Was nach dem Hotkey getippt wird, solange der UI-Prozess noch startet,
@@ -78,8 +78,8 @@ von zwei Arten (`--unload-mode`):
   es, sobald sie vorne ist.
 
 ```sh
-./zig-out/bin/zugriff-zig run --hotkey alt+space --unload-after 60
-./zig-out/bin/zugriff-zig run --hotkey alt+space --unload-after 60 --unload-mode process
+./zig-out/bin/zugriff run --hotkey alt+space --unload-after 60
+./zig-out/bin/zugriff run --hotkey alt+space --unload-after 60 --unload-mode process
 ```
 
 Gemessen auf einem Retina-Mac (ReleaseSafe, macOS 27). Speicher mit
@@ -107,10 +107,9 @@ Beide Versionen teilen sich ihre Dateien:
 - Emoji-Einstellungen `~/Library/Application Support/zugriff/emoji.txt`
 - Icon-Cache `~/Library/Caches/tech.piparo.zugriff/icons`
 
-Läuft der Rust-Agent, sieht `zugriff-zig` dessen Socket und zeigt nur dessen
+Läuft der Rust-Agent, sieht die Zig-Version dessen Socket und zeigt nur dessen
 Palette an. Zum Ausprobieren den Rust-Agent beenden oder die Zig-Version mit
-eigenem `HOME` starten. In der Prozessliste heißt die Zig-Version `zugriff-zig`,
-die Rust-Version `zugriff`.
+eigenem `HOME` starten. Beide Binaries heißen `zugriff`.
 
 ## Installieren
 
@@ -119,8 +118,9 @@ make install
 ```
 
 baut einen sauberen Stand in ReleaseSafe, signiert ihn mit Identität und
-Kennung der Rust-Version (die Bedienungshilfen-Erlaubnis bleibt), legt ihn als
-`~/.local/share/zugriff/bin/zugriff-zig` ab und startet den LaunchAgent
+Kennung der Rust-Version, legt ihn als `~/.local/share/zugriff/bin/zugriff`
+ab (dort lag die Rust-Binary; Pfad und Signatur behalten deren
+Bedienungshilfen-Erlaubnis) und startet den LaunchAgent
 `local.zugriff` neu. Den LaunchAgent legt das Maschinen-Setup an; er
 startet die Palette mit `--unload-after 60 --unload-mode process`.
 

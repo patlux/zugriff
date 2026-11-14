@@ -11,7 +11,7 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption([]const u8, "version", version);
 
-    const exe = b.addExecutable(.{ .name = "zugriff-zig", .root_module = b.createModule(.{
+    const exe = b.addExecutable(.{ .name = "zugriff", .root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,

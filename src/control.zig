@@ -1,7 +1,7 @@
 //! Single-instance control socket.
 //!
 //! The palette is a resident agent. Commands arrive from the global hot keys
-//! or from the `zugriff-zig` CLI over this Unix socket, so a second launch
+//! or from the `zugriff` CLI over this Unix socket, so a second launch
 //! controls the running instance instead of starting a duplicate. The
 //! protocol is the Rust version's: one line in, one line out.
 const std = @import("std");

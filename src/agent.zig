@@ -367,7 +367,7 @@ pub const Agent = struct {
 
     fn hide(a: *Agent, why: []const u8) void {
         if (a.visible) log.info("versteckt ({s})", .{why});
-        // Only a real close counts; `zugriff-zig hide` on a hidden palette must
+        // Only a real close counts; `zugriff hide` on a hidden palette must
         // not keep the last calculation alive.
         if (a.visible) a.palette.closed(nowMs(a)) catch |e| log.warn("Schließen: {t}", .{e});
         a.visible = false;

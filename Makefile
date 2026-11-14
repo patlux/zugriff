@@ -3,7 +3,7 @@
 PYTHON ?= python3
 
 # The launch agent runs this copy, not zig-out/.
-INSTALL_BIN ?= $(HOME)/.local/share/zugriff/bin/zugriff-zig
+INSTALL_BIN ?= $(HOME)/.local/share/zugriff/bin/zugriff
 LAUNCH_AGENT ?= local.zugriff
 
 # macOS ties the Accessibility permission (needed to insert emoji) to the code signature.
@@ -27,10 +27,10 @@ verify: changeset-test changeset-status
 install:
 	@test -z "$$(git status --porcelain --untracked-files=all)" || { echo "Commit pending work first."; exit 1; }
 	mise x -- zig build -Doptimize=ReleaseSafe
-	codesign --force --sign "$(SIGN_IDENTITY)" --identifier $(SIGN_ID) zig-out/bin/zugriff-zig
-	codesign --verify --strict zig-out/bin/zugriff-zig
+	codesign --force --sign "$(SIGN_IDENTITY)" --identifier $(SIGN_ID) zig-out/bin/zugriff
+	codesign --verify --strict zig-out/bin/zugriff
 	install -d "$$(dirname $(INSTALL_BIN))"
-	install -m 0755 zig-out/bin/zugriff-zig $(INSTALL_BIN)
+	install -m 0755 zig-out/bin/zugriff $(INSTALL_BIN)
 	/bin/launchctl kickstart -k gui/$$(id -u)/$(LAUNCH_AGENT) || { echo "Launch agent $(LAUNCH_AGENT) is not loaded."; exit 1; }
 
 changeset:
