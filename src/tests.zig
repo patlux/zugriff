@@ -24,6 +24,7 @@ test {
     _ = @import("ui/theme.zig");
     _ = @import("ui/glyphs.zig");
     _ = @import("ui/tests_palette.zig");
+    _ = @import("ui/tests_emoji.zig");
     _ = @import("daemon.zig");
     _ = @import("logging.zig");
     _ = @import("main.zig");

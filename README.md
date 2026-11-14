@@ -23,7 +23,8 @@ getippt werden kann. Die App davor behält den Fokus.
   Zahl, `⇧↵` mit Aufgabe.
 - Emoji: `Ctrl+Cmd+Space`, `:` am Anfang der Suche oder die Zeile „Emoji“.
   Deutsch oder englisch suchen, `⇥` Hauttöne, `↵` einfügen, `⌘↵` kopieren,
-  `⌘1`–`⌘9` zuletzt verwendete. Einfügen braucht die Bedienungshilfen-Erlaubnis;
+  `⌘1`–`⌘9` zuletzt verwendete. Mit der Maus fügt ein Klick ein, Rechtsklick
+  oder langes Drücken öffnet die Hauttöne. Einfügen braucht die Bedienungshilfen-Erlaubnis;
   ohne sie und bei aktivem Eingabeschutz kopiert `↵` nur.
 - Steuerung des laufenden Agents über einen Unix-Socket.
 
@@ -138,6 +139,9 @@ startet die Palette mit `--unload-after 60 --unload-mode process`.
   einzeln in farbige Bilder (`src/ui/glyphs.zig`), nur die sichtbaren und jedes
   nur einmal. Die Schrift „Apple Color Emoji“ von macOS 27 schneidet 🫡 selbst
   ab; das sieht auch in anderen Apps so aus.
+- Emoji mit der Maus: Rechtsklick (oder Control-Klick) und 0,5 s langes
+  Drücken auf ein Emoji öffnen die Hauttöne, ein zweiter Rechtsklick schließt
+  sie. `PRODUCT.md` beschreibt die Hauttöne nur über `⇥`.
 - Größe: etwa 4,3 MB in ReleaseSafe gegenüber etwa 12 MB der Rust-Binary; die
   Emoji-Tabelle ist in beiden einkompiliert.
 - Apple Intelligence: AppKit meldet unter macOS 27 jede App bei App Intents

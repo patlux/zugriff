@@ -5,8 +5,9 @@
 //! Without a query the grid shows the recently used emoji and then every
 //! group; typing filters by German and English names, keywords and
 //! shortcodes. `↵` inserts into the app in front, `⌘↵` copies, `⇥` opens
-//! the skin tones. The table is static data; entering the picker builds
-//! the grid from it and never waits for anything.
+//! the skin tones. With the mouse a click inserts, a right-click or a long
+//! press opens the skin tones. The table is static data; entering the
+//! picker builds the grid from it and never waits for anything.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const nanoui = @import("nanoui");
@@ -31,6 +32,8 @@ const tones_height: f32 = cell_size + 12 + 2 + 4;
 pub const category_bar_height: f32 = 37;
 /// Recently used emoji `⌘1`–`⌘9` insert.
 const quick_keys = 9;
+/// Seconds a cell is held down before its skin tones open.
+pub const long_press_delay: f32 = 0.5;
 const accent_border = theme.accent.alpha(0.6);
 
 /// Whether `↵` can insert into the app in front. The agent checks this
@@ -92,6 +95,15 @@ const Section = union(enum) {
 
 const PromptRow = enum { open_settings, copy_only };
 
+/// A cell held down with the left button.
+const Hold = struct {
+    cell: usize,
+    /// `ui.Context.time` of the press.
+    since: f64,
+    /// The skin tones opened: the release does not insert.
+    fired: bool = false,
+};
+
 /// The permission question (Z4) for one emoji.
 const Prompt = struct {
     glyph: []const u8,
@@ -116,6 +128,8 @@ pub const Picker = struct {
     selected: usize = 0,
     /// The selected skin tone while the tones are open.
     tones: ?Tone = null,
+    /// The cell pressed last, for the long press.
+    hold: ?Hold = null,
     /// The emoji waiting for the Accessibility answer (Z4).
     prompt: ?Prompt = null,
     prefs: emoji.Prefs = .{},
@@ -154,6 +168,7 @@ pub const Picker = struct {
         k.sections.clearRetainingCapacity();
         k.selected = 0;
         k.tones = null;
+        k.hold = null;
         k.prompt = null;
         k.scroll = .{ .line_top = 0 };
 
@@ -350,6 +365,7 @@ pub fn leave(p: *Palette) void {
     p.emoji.entry = null;
     p.emoji.prompt = null;
     p.emoji.tones = null;
+    p.emoji.hold = null;
     p.placeholder = palette.search_placeholder;
     p.accepts_blocks = true;
 }
@@ -669,12 +685,16 @@ fn grid(p: *Palette, c: *ui.Context) void {
     var first: usize = 0;
     while (first + 1 < tops.items.len and tops.items[first + 1] <= offset) first += 1;
     if (tops.items[first] > 0) ui.div(c).wFull().h(tops.items[first]).end();
+    // A cell may open or close the skin tones while the lines are drawn (a
+    // right-click, a long press): the lines then differ from `tops` until
+    // the next pass, which the change asks for.
+    const n = tops.items.len;
     var i = first;
-    while (i < k.lines.items.len and tops.items[i] < offset + view_h) : (i += 1) {
+    while (i < n and i < k.lines.items.len and tops.items[i] < offset + view_h) : (i += 1) {
         ui.keyInt(c, i);
         lineView(p, c, k.lines.items[i]);
     }
-    if (i < k.lines.items.len) ui.div(c).wFull().h(total - tops.items[i]).end();
+    if (i < n) ui.div(c).wFull().h(total - tops.items[i]).end();
 }
 
 fn lineView(p: *Palette, c: *ui.Context, l: Line) void {
@@ -702,15 +722,52 @@ fn cellView(p: *Palette, c: *ui.Context, index: usize) void {
     const box = ui.div(c).size(cell_size, cell_size).rounded(8).center().control();
     defer box.end();
     if (selected) _ = box.bg(theme.selection_overlay).border(accent_border) else _ = box.hover(theme.surface);
-    if (box.clicked()) {
-        selectCell(p, index);
-        confirm(p);
+    const it = box.interaction();
+    if (it.right_pressed) {
+        c.changed = true;
+        secondaryPress(p, index);
+    }
+    if (it.pressed) longPress(p, c, index, it.hovered and entry.hasTones());
+    if (it.clicked) {
+        c.changed = true;
+        const fired = if (k.hold) |h| h.cell == index and h.fired else false;
+        k.hold = null;
+        // A long press opened the skin tones: its release inserts nothing.
+        if (!fired) {
+            selectCell(p, index);
+            confirm(p);
+        }
     }
     p.glyphs.draw(c, cell.glyph, glyph_size + 4);
     if (entry.hasTones()) ui.div(c).absolute().offset(
         cell_size - 9,
         cell_size - 9,
     ).size(5, 5).rounded(3).bg(theme.placeholder).end();
+}
+
+/// A right-click (or Control-click) selects the cell and opens its skin
+/// tones, or closes them when they are open for it.
+fn secondaryPress(p: *Palette, index: usize) void {
+    const k = &p.emoji;
+    k.hold = null;
+    if (index == k.selected and k.tones != null) return k.closeTones();
+    selectCell(p, index);
+    toggleTones(p);
+}
+
+/// The left button held on cell `index`: after `long_press_delay` its skin
+/// tones open, as long as the pointer stays on it (`armed`).
+fn longPress(p: *Palette, c: *ui.Context, index: usize, armed: bool) void {
+    const k = &p.emoji;
+    if (c.input.pressed or k.hold == null or k.hold.?.cell != index) k.hold = .{ .cell = index, .since = c.time };
+    const h = &k.hold.?;
+    if (h.fired or !armed) return;
+    const waited: f32 = @floatCast(c.time - h.since);
+    if (waited + 1e-4 < long_press_delay) return c.frameIn(long_press_delay - waited);
+    h.fired = true;
+    c.changed = true;
+    selectCell(p, index);
+    if (!(k.openTones(p.gpa) catch false)) p.beep();
 }
 
 fn tonesView(p: *Palette, c: *ui.Context) void {
