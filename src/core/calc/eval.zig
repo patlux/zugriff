@@ -400,6 +400,12 @@ pub const Evaluator = struct {
             .money => |m| ev.eval(m.value),
             .group => |inner| ev.eval(inner),
             .neg => |inner| blk: {
+                // −5 °C is five degrees below zero on its scale, not minus 278,15 K.
+                if (inner.* == .quantity and units.get(inner.quantity.unit).offset.num != 0) {
+                    var amount = try ev.eval(inner.quantity.value);
+                    amount.num = try ev.numOp(.sub, .{ .exact = try Rat.fromInt(ev.a, 0) }, amount.num);
+                    break :blk ev.quantity(amount, inner.quantity.unit);
+                }
                 var v = try ev.eval(inner);
                 v.num = switch (v.num) {
                     .exact => |r| .{ .exact = try r.neg(ev.a) },

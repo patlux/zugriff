@@ -218,20 +218,20 @@ pub const all = [_]Unit{
         .dims = time,
         .factor = .{ .num = 604800 },
     },
-    // A year of 365,25 days, a month the twelfth of it.
+    // A tropical year of 365,2422 days, as fend counts it; a month is its twelfth.
     .{
         .spellings = &.{ "monat", "monate", "monaten" },
         .display = "Monate",
         .one = "Monat",
         .dims = time,
-        .factor = .{ .num = 2629800 },
+        .factor = .{ .num = 262974384, .den = 100 },
     },
     .{
         .spellings = &.{ "jahr", "jahre", "jahren" },
         .display = "Jahre",
         .one = "Jahr",
         .dims = time,
-        .factor = .{ .num = 31557600 },
+        .factor = .{ .num = 3155692608, .den = 100 },
     },
     .{
         .spellings = &.{ "b", "byte", "bytes" },

@@ -632,6 +632,8 @@ test "converts units and names binary sizes" {
     try testing.expectEqualStrings("1 Tag", try f.answer("24 h in Tage"));
     try testing.expectEqualStrings("6 km", try f.answer("3 km × 2"));
     try testing.expectEqualStrings("5 km/h", try f.answer("10 km / 2 h"));
+    try testing.expectEqualStrings("23 °F", try f.answer("-5 °C in °F"));
+    try testing.expectEqualStrings("≈ 365,24 Tage", try f.answer("1 Jahr in Tage"));
 }
 
 test "copies the number for programs" {
