@@ -52,8 +52,10 @@ The palette opens before any content work; this is not negotiable.
   cache.
 - The real agent (`zig build run`, `zig-out/bin/zugriff`) takes the global hot keys, shows a
   panel over everything and can post `⌘V` to other apps. Run it only on a separate test Mac,
-  never on the developer's Mac,
-  and with its own `HOME` so it does not meet the installed Rust agent's socket and preferences.
+  never on the developer's Mac, and with its own `HOME` so it
+  does not meet an installed Rust agent's socket and preferences.
+- On the test Mac, drive it with `zugriff show|emoji|hide|quit` over SSH. The palette closes when
+  it loses key status (by design). Accessibility value writes do not reach nanoui's text field.
 
 ## Never
 
