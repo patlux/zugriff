@@ -110,13 +110,15 @@ fn roundContent(win: objc.Object) void {
 
 /// Centres the panel on the screen with the pointer, draws the palette's
 /// current state into it and makes it the key window without activating
-/// the app.
-pub fn show(w: *nanoui.Window) void {
+/// the app. True when the panel's first frame with the keys is drawn and
+/// on its way to the screen; false leaves it to the caller's redraw.
+pub fn show(w: *nanoui.Window) bool {
     const pool = objc.Pool.push();
     defer pool.pop();
     centerOnPointerScreen(w.nswindow);
     drawBeforeShow(w);
     w.show();
+    return drawWithKeys(w);
 }
 
 /// A hidden panel still holds the frame it showed last (the emoji grid
@@ -147,6 +149,31 @@ fn drawBeforeShow(w: *nanoui.Window) void {
     s.is_visible = false;
     if (had_link) s.startLink();
     if (!drawn) std.log.warn("Palette vor dem Zeigen nicht gezeichnet; der Display-Link zeichnet sie", .{});
+}
+
+/// `drawBeforeShow`'s frame has no caret: the panel is not the key window
+/// yet. nanoui would draw the next frame only after AppKit reports the panel
+/// visible and at the display link's tick after that, about 30 ms later in a
+/// freshly started UI process. This draws it now, with the keys, in the same
+/// transaction, and hands that transaction to the WindowServer at once:
+/// it would otherwise wait until the run loop next waits, which in a freshly
+/// started UI process is after its whole first turn.
+fn drawWithKeys(w: *nanoui.Window) bool {
+    const s = w.surface orelse return false;
+    if (!w.isVisible() or s.in_frame or s.dead) return false;
+    if (s.released) {
+        s.released = false;
+        s.renderer.resize(s.size, s.scale);
+    }
+    const had_link = s.display_link != null;
+    s.stopLink();
+    // On screen now; AppKit's occlusion report follows later.
+    s.is_visible = true;
+    const drawn = s.resizeInTransaction();
+    if (had_link) s.startLink();
+    if (!drawn) return false;
+    objc.msg(void, objc.class("CATransaction"), "flush", .{});
+    return true;
 }
 
 pub fn hide(w: *nanoui.Window) void {

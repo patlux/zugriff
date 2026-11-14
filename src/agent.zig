@@ -406,7 +406,7 @@ pub const Agent = struct {
             log.info("zeigt {t}: Fenster neu angelegt in {d} µs", .{ view, nowUs() - start_us });
         } else log.info("zeigt {t}", .{view});
         a.show_started_us = start_us;
-        panel.show(w);
+        const drawn = panel.show(w);
         a.visible = true;
         // The icons the palette shows are wanted now; later shows have them.
         if (!a.icons_wanted) {
@@ -415,7 +415,7 @@ pub const Agent = struct {
         }
         // The list on screen stays until the scan answers; typing never waits.
         a.requestScan();
-        w.redraw();
+        if (!drawn) w.redraw();
     }
 
     fn hide(a: *Agent, why: []const u8) void {
