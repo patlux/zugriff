@@ -3,6 +3,12 @@
 Versions follow SemVer. Entries come from the Markdown changesets in `.changeset/`.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the local release workflow.
 
+## 0.2.1 - 2026-11-14
+
+### Added
+
+- The help's footer names the running version.
+
 ## 0.2.0 - 2026-11-14
 
 ### Added
