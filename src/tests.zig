@@ -23,5 +23,6 @@ test {
     _ = @import("ui/glyphs.zig");
     _ = @import("ui/tests_palette.zig");
     _ = @import("daemon.zig");
+    _ = @import("logging.zig");
     _ = @import("main.zig");
 }

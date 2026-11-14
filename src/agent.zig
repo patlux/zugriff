@@ -83,6 +83,8 @@ pub const Agent = struct {
     window: ?*nanoui.Window = null,
     /// When the hidden panel may be closed (`nowMs`).
     unload_due_ms: i64 = 0,
+    /// When the last show began (`nowUs`), until the panel has the keys.
+    show_started_us: ?i64 = null,
     palette: Palette = undefined,
     visible: bool = false,
     /// The first show wants the icons that are not cached yet.
@@ -217,6 +219,10 @@ pub const Agent = struct {
         const s = a.settings.unload_after_s orelse return;
         const ms = @as(u64, s) * std.time.ms_per_s;
         a.unload_due_ms = nowMs(a) + @as(i64, @intCast(ms));
+        switch (a.settings.unload_mode) {
+            .window => log.info("Ruhezeit beginnt: Fenster wird in {d} s entladen", .{s}),
+            .process => log.info("Ruhezeit beginnt: UI-Prozess endet in {d} s", .{s}),
+        }
         nanoui.App.after(ms, a, unloadIfIdle);
     }
 
@@ -240,11 +246,13 @@ pub const Agent = struct {
 
     fn togglePressed(ctx: *anyopaque) void {
         const a: *Agent = @ptrCast(@alignCast(ctx));
+        log.info("Hotkey: Palette", .{});
         a.handle(.toggle);
     }
 
     fn emojiPressed(ctx: *anyopaque) void {
         const a: *Agent = @ptrCast(@alignCast(ctx));
+        log.info("Hotkey: Emoji", .{});
         a.handle(.emoji);
     }
 
@@ -263,7 +271,9 @@ pub const Agent = struct {
             a.commands_mutex.lock();
             const next = if (a.commands.items.len > 0) a.commands.orderedRemove(0) else null;
             a.commands_mutex.unlock();
-            a.handle(next orelse return);
+            const c = next orelse return;
+            log.info("Befehl über Socket: {t}", .{c});
+            a.handle(c);
         }
     }
 
@@ -277,13 +287,15 @@ pub const Agent = struct {
     }
 
     fn handle(a: *Agent, c: control.Command) void {
-        log.debug("command {t}", .{c});
         switch (c) {
             .show => a.show(.apps),
-            .hide => a.hide(),
-            .toggle => if (a.focused()) a.hide() else a.show(.apps),
-            .emoji => if (a.focused() and a.palette.showingEmoji()) a.hide() else a.show(.emoji),
-            .quit => a.app.quit(),
+            .hide => a.hide("Befehl"),
+            .toggle => if (a.focused()) a.hide("Umschalten") else a.show(.apps),
+            .emoji => if (a.focused() and a.palette.showingEmoji()) a.hide("Umschalten") else a.show(.emoji),
+            .quit => {
+                log.info("beendet sich auf Befehl", .{});
+                a.app.quit();
+            },
         }
     }
 
@@ -300,7 +312,10 @@ pub const Agent = struct {
         const made = a.window == null;
         const start_us = nowUs();
         const w = a.openWindow() catch |e| return log.err("Palette lässt sich nicht anlegen: {t}", .{e});
-        if (made) log.info("Palette neu angelegt in {d} µs", .{nowUs() - start_us});
+        if (made) {
+            log.info("zeigt {t}: Fenster neu angelegt in {d} µs", .{ view, nowUs() - start_us });
+        } else log.info("zeigt {t}", .{view});
+        a.show_started_us = start_us;
         panel.show(w);
         a.visible = true;
         // The icons the palette shows are wanted now; later shows have them.
@@ -321,7 +336,8 @@ pub const Agent = struct {
         w.redraw();
     }
 
-    fn hide(a: *Agent) void {
+    fn hide(a: *Agent, why: []const u8) void {
+        if (a.visible) log.info("versteckt ({s})", .{why});
         // Only a real close counts; `zugriff-zig hide` on a hidden palette must
         // not keep the last calculation alive.
         if (a.visible) a.palette.closed(nowMs(a)) catch |e| log.warn("Schließen: {t}", .{e});
@@ -334,7 +350,15 @@ pub const Agent = struct {
     /// popover when it loses the keys (a click elsewhere); that is a close.
     fn keyChanged(ctx: *anyopaque, w: *nanoui.Window) void {
         const a: *Agent = @ptrCast(@alignCast(ctx));
-        if (w.isFocused() or !a.visible) return;
+        if (w.isFocused()) {
+            // The first time after a show: the panel is on screen and typing goes to it.
+            if (a.show_started_us) |t|
+                log.info("Palette vorne mit Tastatur nach {d} ms", .{@divTrunc(nowUs() - t, 1000)});
+            a.show_started_us = null;
+            return;
+        }
+        if (!a.visible) return;
+        log.info("versteckt (Fokus verloren)", .{});
         a.palette.closed(nowMs(a)) catch |e| log.warn("Schließen: {t}", .{e});
         a.visible = false;
         panel.release(w);
@@ -370,24 +394,26 @@ pub const Agent = struct {
         const items = a.deferred.toOwnedSlice(a.gpa) catch return;
         defer a.gpa.free(items);
         for (items) |d| switch (d) {
-            .dismiss => a.hide(),
+            .dismiss => a.hide("Escape"),
             .activate => |action| {
-                a.hide();
+                a.hide("Aktion");
+                logAction(action);
                 launch.perform(action);
                 freeAction(a.gpa, action);
             },
             .copy => |t| {
                 defer a.gpa.free(t);
                 nanoui.clipboard.writeText(t);
-                a.hide();
+                log.info("kopiert: {d} Bytes", .{t.len});
+                a.hide("kopiert");
             },
             .insert => |t| {
                 defer a.gpa.free(t);
-                a.hide();
+                a.hide("Einfügen");
                 a.insertText(t);
             },
             .request_insert_permission => {
-                a.hide();
+                a.hide("Erlaubnis");
                 log.info("Bedienungshilfen-Erlaubnis angefragt", .{});
                 insert.requestTrust();
             },
@@ -438,10 +464,13 @@ pub const Agent = struct {
 
     fn scan(ctx: *anyopaque) ?apps.List {
         const a: *Agent = @ptrCast(@alignCast(ctx));
-        return apps.discover(a.gpa, a.io, a.home) catch |e| {
+        const started = nowUs();
+        const list = apps.discover(a.gpa, a.io, a.home) catch |e| {
             log.err("App-Suche fehlgeschlagen: {t}", .{e});
             return null;
         };
+        log.info("App-Suche: {d} Apps in {d} ms", .{ list.items.len, @divTrunc(nowUs() - started, 1000) });
+        return list;
     }
 
     /// On the scan thread: the newest list waits for the main thread.
@@ -569,6 +598,14 @@ pub const Agent = struct {
         nanoui.shell.beep();
     }
 };
+
+/// What an activated row does, for the log.
+fn logAction(action: core.Action) void {
+    switch (action) {
+        .open_url => |u| log.info("öffnet Adresse {s}", .{u}),
+        else => if (action.path()) |p| log.info("{t}: {s}", .{ action, p }) else log.info("{t}", .{action}),
+    }
+}
 
 /// The palette and emoji hot keys of `keys`, calling `on_palette` and
 /// `on_emoji` with `ctx`; the agent's and the daemon's.

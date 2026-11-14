@@ -5,11 +5,12 @@ const build_options = @import("build_options");
 const core = @import("core.zig");
 const agent = @import("agent.zig");
 const daemon = @import("daemon.zig");
+const logging = @import("logging.zig");
 const control = @import("control.zig");
 const apps = @import("mac/apps.zig");
 const icons = @import("mac/icons.zig");
 
-pub const std_options: std.Options = .{ .log_level = .info };
+pub const std_options: std.Options = .{ .log_level = .info, .logFn = logging.logFn };
 
 const help =
     \\Zugriff — schnelle native Command Palette für macOS
@@ -39,6 +40,7 @@ const help =
 ;
 
 pub fn main(init: std.process.Init) !void {
+    logging.start();
     const arena = init.arena.allocator();
     const io = init.io;
     const home = init.environ_map.get("HOME");
@@ -57,11 +59,16 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, command, "run")) {
         const settings = parseRun(rest) catch |e| optionError(e);
         const resident = residentInit(init);
-        if (settings.unload_mode == .process) return daemon.Daemon.run(resident.gpa, io, home, resident, settings);
+        if (settings.unload_mode == .process) {
+            logging.setRole("daemon");
+            return daemon.Daemon.run(resident.gpa, io, home, resident, settings);
+        }
+        logging.setRole("agent");
         return agent.Agent.run(resident.gpa, io, home, resident, settings);
     }
     // Internal: the UI process `--unload-mode process` starts (`daemon.zig`).
     if (std.mem.eql(u8, command, "ui")) {
+        logging.setRole("ui");
         const settings = parseUi(rest) catch |e| optionError(e);
         const resident = residentInit(init);
         return agent.Agent.run(resident.gpa, io, home, resident, settings);

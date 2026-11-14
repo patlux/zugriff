@@ -72,11 +72,13 @@ pub const Daemon = struct {
 
     fn palettePressed(ctx: *anyopaque) void {
         const d: *Daemon = @ptrCast(@alignCast(ctx));
+        log.info("Hotkey: Palette", .{});
         d.handle(.toggle);
     }
 
     fn emojiPressed(ctx: *anyopaque) void {
         const d: *Daemon = @ptrCast(@alignCast(ctx));
+        log.info("Hotkey: Emoji", .{});
         d.handle(.emoji);
     }
 
@@ -95,7 +97,9 @@ pub const Daemon = struct {
             d.commands_mutex.lock();
             const next = if (d.commands.items.len > 0) d.commands.orderedRemove(0) else null;
             d.commands_mutex.unlock();
-            d.handle(next orelse return);
+            const c = next orelse return;
+            log.info("Befehl über Socket: {t}", .{c});
+            d.handle(c);
         }
     }
 
@@ -113,9 +117,11 @@ pub const Daemon = struct {
     }
 
     fn handle(d: *Daemon, c: control.Command) void {
-        log.debug("command {t}", .{c});
         switch (c) {
-            .quit => d.app.quit(),
+            .quit => {
+                log.info("beendet sich auf Befehl", .{});
+                d.app.quit();
+            },
             .hide => if (d.childRunning()) d.forward(.hide) catch |e| log.debug("hide: {t}", .{e}),
             .show, .toggle, .emoji => {
                 if (d.forward(c)) |_| return else |_| {}
@@ -130,7 +136,9 @@ pub const Daemon = struct {
     fn forward(d: *Daemon, c: control.Command) !void {
         var buf: [512]u8 = undefined;
         var fba: std.heap.FixedBufferAllocator = .init(&buf);
+        const started = agent.nowUs();
         _ = try control.request(fba.allocator(), d.io, d.ui_socket, @tagName(c));
+        log.info("an UI-Prozess weitergereicht: {t} ({d} µs)", .{ c, agent.nowUs() - started });
     }
 
     /// Whether the UI process lives; collects it once it has ended.
@@ -142,6 +150,7 @@ pub const Daemon = struct {
         };
         var st: c_int = 0;
         if (std.c.waitpid(pid, &st, std.c.W.NOHANG) == 0) return true;
+        log.info("UI-Prozess {d} ist beendet", .{pid});
         d.child = null;
         return false;
     }
