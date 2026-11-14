@@ -48,10 +48,21 @@ pub const Writer = struct {
     mutex: sync.Mutex = .{},
     cond: sync.Condition = .{},
     next: ?Prefs = null,
+    stopping: bool = false,
+    thread: ?std.Thread = null,
 
     pub fn start(w: *Writer) !void {
-        const t = try std.Thread.spawn(.{}, run, .{w});
-        t.detach();
+        w.thread = try std.Thread.spawn(.{}, run, .{w});
+    }
+
+    /// Writes what is still pending, then ends the thread and waits for it.
+    pub fn stop(w: *Writer) void {
+        w.mutex.lock();
+        w.stopping = true;
+        w.mutex.unlock();
+        w.cond.signal();
+        if (w.thread) |t| t.join();
+        w.thread = null;
     }
 
     pub fn put(w: *Writer, prefs: Prefs) void {
@@ -64,8 +75,11 @@ pub const Writer = struct {
     fn run(w: *Writer) void {
         while (true) {
             w.mutex.lock();
-            while (w.next == null) w.cond.wait(&w.mutex);
-            const prefs = w.next.?;
+            while (w.next == null and !w.stopping) w.cond.wait(&w.mutex);
+            const prefs = w.next orelse {
+                w.mutex.unlock();
+                return;
+            };
             w.next = null;
             w.mutex.unlock();
             save(w.io, w.file, &prefs) catch |e| log.err("Emoji-Einstellungen nicht gespeichert: {t}", .{e});
@@ -85,4 +99,19 @@ test "preferences survive a save and a load" {
     try std.testing.expect(back.eql(&prefs));
     const missing = load(io, "/tmp/zugriff-does-not-exist/emoji.txt");
     try std.testing.expectEqual(@as(usize, 0), missing.recent_len);
+}
+
+test "stopping the writer still writes the last change" {
+    const io = std.testing.io;
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const file = try std.mem.print(&buf, "/tmp/zugriff-writer-{d}/emoji.txt", .{std.c.getpid()});
+    defer std.Io.Dir.cwd().deleteTree(io, std.Io.Dir.path.dirname(file).?) catch {};
+    var w: Writer = .{ .io = io, .file = file };
+    try w.start();
+    var prefs: Prefs = .{ .tone = .dark };
+    prefs.record("👍");
+    w.put(prefs);
+    w.stop();
+    const back = load(io, file);
+    try std.testing.expect(back.eql(&prefs));
 }

@@ -71,6 +71,7 @@ pub const Agent = struct {
     icon_queue: std.ArrayList([]u8) = .empty,
     icon_pass_running: bool = false,
     scanner: app_scan.Scanner(apps.List) = undefined,
+    scanning: bool = false,
     /// The newest app list from the scan thread, for the main thread.
     inbox_mutex: sync.Mutex = .{},
     inbox: ?apps.List = null,
@@ -79,9 +80,9 @@ pub const Agent = struct {
     commands: std.ArrayList(control.Command) = .empty,
     deferred: std.ArrayList(Deferred) = .empty,
     deferred_scheduled: bool = false,
-    prefs_writer: emoji_prefs.Writer = undefined,
+    prefs_writer: ?emoji_prefs.Writer = null,
     prefs_loaded: ?core.emoji.Prefs = null,
-    server: control.Server = undefined,
+    server: ?control.Server = null,
     staged: ?insert.Staged = null,
 
     pub fn run(gpa: Allocator, io: std.Io, home: ?[]const u8, init: std.process.Init, keys: Hotkeys) !void {
@@ -107,6 +108,7 @@ pub const Agent = struct {
             .{ .ctx = agent, .emit = emitted, .clipboard = readClipboard, .now_ms = nowMs, .beep = beep },
         );
         defer agent.palette.deinit();
+        defer agent.shutdown();
 
         // Window and hot keys first.
         agent.window = try app.newWindow(panel.options(
@@ -124,22 +126,42 @@ pub const Agent = struct {
                 socket,
                 .{ .ctx = agent, .command = commandFromSocket, .status = status },
             );
-            try agent.server.spawn();
+            try agent.server.?.spawn();
         }
 
         // Content next, off the main thread.
         agent.scanner = .{ .ctx = agent, .scan = scan, .deliver = delivered };
         try agent.scanner.start();
+        agent.scanning = true;
         agent.scanner.rescan();
         const prefs_file = try emoji_prefs.path(init.arena.allocator(), home);
         if (prefs_file) |file| {
             agent.prefs_writer = .{ .io = io, .file = file };
-            try agent.prefs_writer.start();
+            try agent.prefs_writer.?.start();
             const t = try std.Thread.spawn(.{}, loadPrefs, .{ agent, file });
             t.detach();
         }
         try app.run();
         log.info("Zugriff beendet", .{});
+    }
+
+    /// After the run loop: background work ends, the last preferences are
+    /// written, the clipboard gets its old items back and the socket goes.
+    fn shutdown(a: *Agent) void {
+        if (a.scanning) a.scanner.stop();
+        if (a.prefs_writer) |*w| w.stop();
+        if (a.server) |*s| s.unlink();
+        if (a.staged) |s| _ = s.restore();
+        if (a.inbox) |*list| list.deinit();
+        for (a.icon_queue.items) |path| a.gpa.free(path);
+        a.icon_queue.deinit(a.gpa);
+        a.commands.deinit(a.gpa);
+        for (a.deferred.items) |d| switch (d) {
+            .activate => |action| freeAction(a.gpa, action),
+            .copy, .insert => |t| a.gpa.free(t),
+            else => {},
+        };
+        a.deferred.deinit(a.gpa);
     }
 
     fn registerHotkeys(a: *Agent, keys: Hotkeys) void {
@@ -263,7 +285,7 @@ pub const Agent = struct {
         const a: *Agent = @ptrCast(@alignCast(ctx));
         const d: Deferred = switch (e) {
             .emoji_prefs => |p| {
-                if (a.home != null) a.prefs_writer.put(p);
+                if (a.prefs_writer) |*w| w.put(p);
                 return;
             },
             .dismiss => .dismiss,

@@ -5,6 +5,7 @@
 //! controls the running instance instead of starting a duplicate. The
 //! protocol is the Rust version's: one line in, one line out.
 const std = @import("std");
+const log = std.log.scoped(.control);
 const net = std.Io.net;
 const files = @import("files.zig");
 
@@ -66,6 +67,7 @@ pub const Handler = struct {
 
 pub const Server = struct {
     io: std.Io,
+    path: []const u8,
     server: net.Server,
     handler: Handler,
 
@@ -79,13 +81,19 @@ pub const Server = struct {
             else => return e,
         };
         const addr = try net.UnixAddress.init(path);
-        return .{ .io = io, .server = try addr.listen(io, .{}), .handler = handler };
+        return .{ .io = io, .path = path, .server = try addr.listen(io, .{}), .handler = handler };
     }
 
     /// Serves connections on a thread of its own, for the agent's lifetime.
     pub fn spawn(s: *Server) !void {
         const t = try std.Thread.spawn(.{}, serve, .{s});
         t.detach();
+    }
+
+    /// Removes the socket file when the agent ends, so no stale socket stays
+    /// behind. The listener thread ends with the process.
+    pub fn unlink(s: *Server) void {
+        std.Io.Dir.deleteFileAbsolute(s.io, s.path) catch |e| log.warn("Socket nicht entfernt: {t}", .{e});
     }
 
     fn serve(s: *Server) void {
