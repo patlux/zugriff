@@ -3,6 +3,13 @@
 Versions follow SemVer. Entries come from the Markdown changesets in `.changeset/`.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the local release workflow.
 
+## 0.2.2 - 2026-11-15
+
+### Changed
+
+- Show the palette sooner the first time it opens: whether Zugriff may insert emoji (the Accessibility permission) is checked while it starts, not when the palette opens.
+- The palette appears sooner after the hot key, already with the blinking caret: its first frame with the keyboard is drawn while it is shown and sent to the screen at once. With --unload-mode process about 50 ms sooner, the resident palette's first show about 40 ms.
+
 ## 0.2.1 - 2026-11-14
 
 ### Added
