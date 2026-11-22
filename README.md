@@ -307,7 +307,7 @@ Hot keys are written like `cmd+space`, `ctrl+cmd+space`, `alt+space`,
 | `~/Library/Application Support/zugriff/control.sock` | the control socket |
 | `~/Library/Application Support/zugriff/emoji.txt` | skin tone and recently used emoji |
 | `~/Library/Application Support/zugriff/help-seen` | marker: the help was opened once |
-| `~/Library/Caches/tech.piparo.zugriff/icons` | app icons as PNG |
+| `~/Library/Caches/zugriff/icons` | app icons as PNG |
 
 ## Development
 
@@ -347,8 +347,7 @@ src/shots.zig    Offscreen pictures for `zig build shots`
 ## Background
 
 Zugriff started as a Rust app on GPUI. This Zig version replaced it in
-November 2026 and shares its files, so both read the same emoji history and
-icon cache. `PRODUCT.md` and the FigCraft drafts in `design/figcraft` come
+November 2026 and reads the same emoji history. `PRODUCT.md` and the FigCraft drafts in `design/figcraft` come
 from the Rust version and describe what the palette should do (in German).
 Where this version differs:
 

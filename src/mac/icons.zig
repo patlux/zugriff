@@ -5,8 +5,8 @@
 //! Drawing it is AppKit work, so the palette renders icons after it is
 //! visible instead of blocking the opening path.
 //!
-//! The rendered icon is a 64 px PNG in `~/Library/Caches/tech.piparo.zugriff/icons`,
-//! named exactly as the Rust version names it: both versions share the cache.
+//! The rendered icon is a 64 px PNG in `~/Library/Caches/zugriff/icons`, named
+//! exactly as the Rust version named it.
 //! `cached` answers from the file system alone, so the scan thread can
 //! deliver icons without touching AppKit.
 const std = @import("std");
@@ -28,7 +28,7 @@ const fnv_prime: u64 = 0x0000_0100_0000_01b3;
 fn cacheDirectory(a: std.mem.Allocator, home: ?[]const u8) !?[]const u8 {
     const h = home orelse return null;
     if (h.len == 0) return null;
-    const dir = try a.print("{s}/Library/Caches/tech.piparo.zugriff/icons", .{h});
+    const dir = try a.print("{s}/Library/Caches/zugriff/icons", .{h});
     return dir;
 }
 
