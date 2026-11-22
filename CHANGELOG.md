@@ -3,6 +3,18 @@
 Versions follow SemVer. Entries come from the Markdown changesets in `.changeset/`.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the local release workflow.
 
+## 0.3.0 - 2026-11-22
+
+### Added
+
+- Speak English or German: the palette, the help, the emoji picker and the command line follow the first preferred language of macOS, and every command takes --language de|en.
+- Calculate in English notation where macOS writes numbers with a decimal point: 1,299.50 × 2, 95.2%, $1,545.81, units such as 14 days or 11.81 inches, and the words times, divided by and of. A number that reads two ways (1,250 or 1.250) offers the other reading.
+- In English, the emoji picker shows English names and group titles and ranks English names first; German names still find their emoji.
+
+### Changed
+
+- Keep the app icons in ~/Library/Caches/zugriff/icons, next to the other files of Zugriff. The palette renders them again once after the update.
+
 ## 0.2.2 - 2026-11-15
 
 ### Changed
