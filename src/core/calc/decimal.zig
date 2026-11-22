@@ -1,11 +1,13 @@
 //! Exact decimal numbers as digit strings.
 //!
-//! Rounding and German formatting work on the digits directly, so no value
-//! passes through a binary float on its way to the screen. Every function
+//! Rounding and formatting (German `1.234,5`, English `1,234.5`) work on the
+//! digits directly, so no value passes through a binary float on its way to
+//! the screen. Every function
 //! that builds a new number takes an allocator; the calculator gives it an
 //! arena per calculation.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Language = @import("../language.zig").Language;
 
 /// A finite decimal number: sign, integer digits and fraction digits.
 pub const Decimal = struct {
@@ -118,11 +120,18 @@ pub const Decimal = struct {
 
     /// German notation: `.` groups thousands, `,` separates the fraction.
     pub fn german(d: Decimal, a: Allocator) ![]u8 {
+        return d.format(a, .de);
+    }
+
+    /// The notation of `numbers`: German `1.234,5` or English `1,234.5`.
+    pub fn format(d: Decimal, a: Allocator, numbers: Language) ![]u8 {
+        const group: u8 = if (numbers == .de) '.' else ',';
+        const point: u8 = if (numbers == .de) ',' else '.';
         var out: std.ArrayList(u8) = .empty;
         if (d.negative) try out.append(a, '-');
-        try groupThousands(a, &out, d.int);
+        try groupThousands(a, &out, d.int, group);
         if (d.frac.len > 0) {
-            try out.append(a, ',');
+            try out.append(a, point);
             try out.appendSlice(a, d.frac);
         }
         return out.toOwnedSlice(a);
@@ -234,7 +243,12 @@ pub const Scientific = struct {
 
     /// `1,23 × 10³⁰`
     pub fn german(s: Scientific, a: Allocator) ![]u8 {
-        return a.print("{s} × 10{s}", .{ try s.mantissa.german(a), try superscript(a, s.exponent) });
+        return s.format(a, .de);
+    }
+
+    /// `1,23 × 10³⁰` or `1.23 × 10³⁰`.
+    pub fn format(s: Scientific, a: Allocator, numbers: Language) ![]u8 {
+        return a.print("{s} × 10{s}", .{ try s.mantissa.format(a, numbers), try superscript(a, s.exponent) });
     }
 
     /// `1.23e30`
@@ -253,9 +267,9 @@ fn superscript(a: Allocator, exponent: i32) ![]u8 {
     return out.toOwnedSlice(a);
 }
 
-pub fn groupThousands(a: Allocator, out: *std.ArrayList(u8), int: []const u8) !void {
+fn groupThousands(a: Allocator, out: *std.ArrayList(u8), int: []const u8, separator: u8) !void {
     for (int, 0..) |digit, i| {
-        if (i > 0 and (int.len - i) % 3 == 0) try out.append(a, '.');
+        if (i > 0 and (int.len - i) % 3 == 0) try out.append(a, separator);
         try out.append(a, digit);
     }
 }
@@ -369,6 +383,9 @@ test "formats German and plain" {
     try testing.expectEqualStrings("-1.234.567", try t.dec("-1234567").german(t.a()));
     try testing.expectEqualStrings("0,3", try t.dec("0.3").german(t.a()));
     try testing.expectEqualStrings("18.446.744.073.709.551.616", try t.dec("18446744073709551616").german(t.a()));
+    try testing.expectEqualStrings("4,166.70", try t.dec("4166.70").format(t.a(), .en));
+    try testing.expectEqualStrings("-1,234,567", try t.dec("-1234567").format(t.a(), .en));
+    try testing.expectEqualStrings("0.3", try t.dec("0.3").format(t.a(), .en));
 }
 
 test "rounds half away from zero" {
@@ -409,6 +426,7 @@ test "writes scientific notation" {
     defer t.deinit();
     const big = try t.dec("1267650600228229401496703205376").scientific(t.a(), 12);
     try testing.expectEqualStrings("1,26765060023 × 10³⁰", try big.german(t.a()));
+    try testing.expectEqualStrings("1.26765060023 × 10³⁰", try big.format(t.a(), .en));
     try testing.expectEqualStrings("1.26765060023e30", try big.plain(t.a()));
     try testing.expect(big.lost);
     const small = try t.dec("0.00000000000000000001").scientific(t.a(), 12);

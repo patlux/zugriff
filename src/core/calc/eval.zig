@@ -12,6 +12,7 @@ const Decimal = @import("decimal.zig").Decimal;
 const lexer = @import("lexer.zig");
 const syntax = @import("syntax.zig");
 const units = @import("units.zig");
+const Language = @import("../language.zig").Language;
 const Expr = syntax.Expr;
 const Reading = syntax.Reading;
 const Dims = units.Dims;
@@ -610,8 +611,9 @@ pub const Output = struct {
 
 pub const Target = union(enum) { none, unit: units.Id, percent };
 
-/// Converts `v` to its target (or the units it carries) and to digits.
-pub fn output(a: Allocator, v: Value, target: Target) Error!Output {
+/// Converts `v` to its target (or the units it carries) and to digits; the
+/// units are named in `language`.
+pub fn output(a: Allocator, v: Value, target: Target, language: Language) Error!Output {
     var shown = v.shown;
     var num = v.num;
     var percent = false;
@@ -667,7 +669,7 @@ pub fn output(a: Allocator, v: Value, target: Target) Error!Output {
     return .{
         .value = digits.value,
         .approximate = !digits.exact,
-        .unit = if (percent) "%" else try label(a, shown, digits.value),
+        .unit = if (percent) "%" else try label(a, shown, digits.value, language),
     };
 }
 
@@ -705,26 +707,26 @@ fn baseUnits(dims: Dims) UnitList {
 }
 
 /// `km/h`, `m²`, `Tage` or `Tag` for exactly one.
-fn label(a: Allocator, l: UnitList, value: Decimal) ![]const u8 {
+fn label(a: Allocator, l: UnitList, value: Decimal, language: Language) ![]const u8 {
     if (l.len == 0) return "";
     if (l.len == 1 and l.pows[0] == 1) {
         const u = units.get(l.ids[0]);
         const one = value.isInteger() and std.mem.eql(u8, value.int, "1");
-        return if (one) u.one orelse u.display else u.display;
+        return u.name(language, one);
     }
     var out: std.ArrayList(u8) = .empty;
     var first = true;
     for (0..l.len) |i| if (l.pows[i] > 0) {
         if (!first) try out.appendSlice(a, "·");
         first = false;
-        try appendPower(a, &out, units.get(l.ids[i]).display, l.pows[i]);
+        try appendPower(a, &out, units.get(l.ids[i]).name(language, false), l.pows[i]);
     };
     if (first) try out.append(a, '1');
     var denominator = false;
     for (0..l.len) |i| if (l.pows[i] < 0) {
         try out.appendSlice(a, if (denominator) "·" else "/");
         denominator = true;
-        try appendPower(a, &out, units.get(l.ids[i]).display, -l.pows[i]);
+        try appendPower(a, &out, units.get(l.ids[i]).name(language, false), -l.pows[i]);
     };
     return out.toOwnedSlice(a);
 }

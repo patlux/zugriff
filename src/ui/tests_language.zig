@@ -155,3 +155,51 @@ test "a pasted sheet speaks English" {
     try testing.expect(h.t.containsText("1 without a number"));
     try expectNoGerman(&h);
 }
+
+test "the English calculator writes English numbers and units" {
+    var h: Harness = undefined;
+    try h.initIn(&.{}, .en);
+    defer h.deinit();
+    h.typeText("1,299.50 * 2");
+    h.t.frame();
+    try testing.expect(h.t.hasText("1,299.50 × 2"));
+    try testing.expect(h.t.hasText("2,599.00"));
+    h.enter();
+    try testing.expectEqualStrings("2,599.00", h.fake.nextCopy().?);
+
+    h.clear();
+    h.typeText("2 weeks in days");
+    h.t.frame();
+    try testing.expect(h.t.hasText("14 days"));
+    try testing.expect(h.t.hasText("Units"));
+    try expectNoGerman(&h);
+}
+
+test "a number that reads two ways names both readings in English" {
+    var h: Harness = undefined;
+    try h.initIn(&.{}, .en);
+    defer h.deinit();
+    h.typeText("1,250 × 4");
+    h.t.frame();
+    try testing.expect(h.t.hasText("5,000"));
+    try testing.expect(h.t.hasText("comma separates thousands, English"));
+    try testing.expect(h.t.hasText("Other reading"));
+    try testing.expect(h.t.hasText("read as 1.250 × 4 · comma as decimal point, German"));
+    try testing.expect(h.t.hasText("2 readings"));
+    try expectNoGerman(&h);
+}
+
+test "English texts with German numbers, as on a Mac in English with a German region" {
+    var h: Harness = undefined;
+    try h.initLocale(&.{}, .{ .language = .en, .numbers = .de });
+    defer h.deinit();
+    h.typeText("?");
+    h.t.frame();
+    try testing.expect(h.t.hasText("1.299 € + 19 %"));
+    h.clear();
+    h.typeText("1.250 × 4");
+    h.t.frame();
+    try testing.expect(h.t.hasText("5.000"));
+    try testing.expect(h.t.hasText("dot separates thousands, German"));
+    try testing.expect(h.t.hasText("read as 1,250 × 4 · dot as decimal point, English"));
+}

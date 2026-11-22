@@ -1,12 +1,14 @@
 //! Reads a typed or pasted task into tokens.
 //!
-//! The lexer knows German number notation, the operator signs that come out
-//! of Word, PDFs and web pages, and a small set of words (`mal`, `zzgl.`,
-//! `von`, unit names). Everything else is an unknown word: the caller may
-//! drop it at the edges of the task, but never between two numbers.
+//! The lexer knows German and English number notation, the operator signs
+//! that come out of Word, PDFs and web pages, and a small set of words
+//! (`mal`, `times`, `zzgl.`, `von`, `of`, unit names). Everything else is an
+//! unknown word: the caller may drop it at the edges of the task, but never
+//! between two numbers.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const text = @import("../text.zig");
+const Language = @import("../language.zig").Language;
 const Decimal = @import("decimal.zig").Decimal;
 const units = @import("units.zig");
 
@@ -41,13 +43,21 @@ pub const Currency = []const u8;
 /// and `1.250` could be either.
 pub const Notation = enum { german, english, either };
 
-/// A number as typed, read the German way.
+/// The separator that makes a number read two ways: `1.250` or `1,250`.
+pub const Separator = enum { dot, comma };
+
+/// A number as typed.
 pub const Literal = struct {
+    /// The German reading.
     value: Decimal,
-    /// The English reading of a dot before exactly three digits (`1.250` is
-    /// 1.25), which German reads as a thousands separator (1250).
+    /// The English reading where it differs: a dot before exactly three
+    /// digits is a decimal point in English (`1.250` is 1.25) and groups
+    /// thousands in German (1250). With English notation the comma reads
+    /// two ways as well: `1,250` is 1250 in English, 1.25 in German.
     alternative: ?Decimal = null,
     notation: Notation,
+    /// The separator of a number with an `alternative`.
+    separator: Separator = .dot,
 };
 
 pub const Token = union(enum) {
@@ -93,8 +103,9 @@ pub const Token = union(enum) {
 };
 
 /// Splits `s` into tokens, in `a`; null when it holds a character or a
-/// number that no task contains, such as `10:42`, `1.2.3` or `#`.
-pub fn tokenize(a: Allocator, s: []const u8) !?[]Token {
+/// number that no task contains, such as `10:42`, `1.2.3` or `#`. With
+/// English `numbers`, `1,250` reads two ways too.
+pub fn tokenize(a: Allocator, s: []const u8, numbers: Language) !?[]Token {
     var chars: std.ArrayList(u21) = .empty;
     try text.decodeInto(a, s, &chars);
     const cs = chars.items;
@@ -114,7 +125,7 @@ pub fn tokenize(a: Allocator, s: []const u8) !?[]Token {
             const start = i;
             i = scanNumber(cs, i);
             const raw = try encode(a, cs[start..i]);
-            const literal = try readNumber(a, raw) orelse return null;
+            const literal = try readNumber(a, raw, numbers) orelse return null;
             try tokens.append(a, .{ .number = literal });
             continue;
         }
@@ -132,15 +143,9 @@ pub fn tokenize(a: Allocator, s: []const u8) !?[]Token {
             const start = i;
             i = scanWord(cs, i);
             const word = try encode(a, cs[start..i]);
-            if (std.ascii.eqlIgnoreCase(word, "geteilt")) {
-                // `geteilt durch` is one operator.
-                const after = skipSpaces(cs, i);
-                if (after + 5 <= cs.len) {
-                    const durch = try encode(a, cs[after .. after + 5]);
-                    const ends = after + 5 >= cs.len or !text.isAlphanumeric(cs[after + 5]);
-                    if (std.ascii.eqlIgnoreCase(durch, "durch") and ends) i = after + 5;
-                }
-            }
+            // `geteilt durch` and `divided by` are one operator each.
+            if (std.ascii.eqlIgnoreCase(word, "geteilt")) i = try skipWord(a, cs, i, "durch");
+            if (std.ascii.eqlIgnoreCase(word, "divided")) i = try skipWord(a, cs, i, "by");
             const previous: ?Token = if (tokens.items.len > 0) tokens.items[tokens.items.len - 1] else null;
             try tokens.append(a, try classifyWord(a, word, previous));
             continue;
@@ -204,6 +209,15 @@ fn encode(a: Allocator, cps: []const u21) ![]u8 {
     return out.toOwnedSlice(a);
 }
 
+/// The position after `word` when it follows `start` (after spaces), else `start`.
+fn skipWord(a: Allocator, cs: []const u21, start: usize, word: []const u8) !usize {
+    const after = skipSpaces(cs, start);
+    if (after + word.len > cs.len) return start;
+    const found = try encode(a, cs[after .. after + word.len]);
+    const ends = after + word.len >= cs.len or !text.isAlphanumeric(cs[after + word.len]);
+    return if (std.ascii.eqlIgnoreCase(found, word) and ends) after + word.len else start;
+}
+
 fn skipSpaces(cs: []const u21, start: usize) usize {
     var i = start;
     while (i < cs.len and text.isWhitespace(cs[i])) i += 1;
@@ -244,15 +258,28 @@ fn scanWord(cs: []const u21, start: usize) usize {
     return i;
 }
 
-/// Reads `1.234,56`, `1,234.56`, `3,5`, `3.14` and `1.250` (both readings).
-fn readNumber(a: Allocator, raw: []const u8) !?Literal {
+/// Reads `1.234,56`, `1,234.56`, `3,5`, `3.14` and `1.250` (both
+/// readings); with English `numbers` also `1,250` (both readings).
+fn readNumber(a: Allocator, raw: []const u8, numbers: Language) !?Literal {
     const dots = std.mem.count(u8, raw, ".");
     const commas = std.mem.count(u8, raw, ",");
 
     if (dots == 0 and commas == 0) return .{ .value = (try plain(a, raw, "")) orelse return null, .notation = .either };
     if (dots == 0 and commas == 1) {
         const at = std.mem.findScalar(u8, raw, ',').?;
-        return .{ .value = (try plain(a, raw[0..at], raw[at + 1 ..])) orelse return null, .notation = .german };
+        const int = raw[0..at];
+        const frac = raw[at + 1 ..];
+        // `1,250` is 1.25 in German and 1250 in English; who writes English
+        // numbers means the latter, and gets the former offered.
+        if (numbers == .en and groupsThousands(int, frac)) {
+            return .{
+                .value = (try plain(a, int, frac)) orelse return null,
+                .alternative = (try plain(a, try std.mem.concat(a, u8, &.{ int, frac }), "")) orelse return null,
+                .notation = .either,
+                .separator = .comma,
+            };
+        }
+        return .{ .value = (try plain(a, int, frac)) orelse return null, .notation = .german };
     }
     if (dots == 1 and commas == 0) {
         const at = std.mem.findScalar(u8, raw, '.').?;
@@ -260,7 +287,7 @@ fn readNumber(a: Allocator, raw: []const u8) !?Literal {
         const frac = raw[at + 1 ..];
         // `1.250` is 1250 in German and 1.25 in English. A leading `0.` or
         // another number of digits is a decimal point either way.
-        if (frac.len == 3 and int.len >= 1 and int.len <= 3 and !std.mem.eql(u8, int, "0")) {
+        if (groupsThousands(int, frac)) {
             return .{
                 .value = (try plain(a, try std.mem.concat(a, u8, &.{ int, frac }), "")) orelse return null,
                 .alternative = (try plain(a, int, frac)) orelse return null,
@@ -285,6 +312,12 @@ fn readNumber(a: Allocator, raw: []const u8) !?Literal {
     if (std.mem.findScalar(u8, int_part, decimal_sep) != null) return null;
     const int = try grouped(a, int_part, group_sep) orelse return null;
     return .{ .value = (try plain(a, int, raw[split + 1 ..])) orelse return null, .notation = notation };
+}
+
+/// Whether one separator between `int` and `frac` could group thousands:
+/// one to three leading digits, not just `0`, and exactly three after it.
+fn groupsThousands(int: []const u8, frac: []const u8) bool {
+    return frac.len == 3 and int.len >= 1 and int.len <= 3 and !std.mem.eql(u8, int, "0");
 }
 
 fn plain(a: Allocator, int: []const u8, frac: []const u8) !?Decimal {
@@ -321,8 +354,8 @@ fn classifyWord(a: Allocator, word: []const u8, previous: ?Token) !Token {
     const keywords = [_]Keyword{
         .{ &.{ "plus", "zzgl", "zuzüglich" }, .{ .op = .add } },
         .{ &.{ "minus", "abzgl", "abzüglich" }, .{ .op = .sub } },
-        .{ &.{"mal"}, .{ .op = .mul } },
-        .{ &.{ "durch", "geteilt" }, .{ .op = .div } },
+        .{ &.{ "mal", "times" }, .{ .op = .mul } },
+        .{ &.{ "durch", "geteilt", "divided" }, .{ .op = .div } },
         .{ &.{"hoch"}, .{ .op = .pow } },
         .{ &.{ "von", "of" }, .of },
         .{ &.{ "in", "zu", "to", "as", "nach", "als" }, .convert },
@@ -354,7 +387,7 @@ fn classifyWord(a: Allocator, word: []const u8, previous: ?Token) !Token {
 const testing = std.testing;
 
 fn number(a: Allocator, s: []const u8) !struct { []const u8, ?[]const u8 } {
-    const tokens = (try tokenize(a, s)).?;
+    const tokens = (try tokenize(a, s, .de)).?;
     try testing.expectEqual(@as(usize, 1), tokens.len);
     const lit = tokens[0].number;
     return .{ try lit.value.plain(a), if (lit.alternative) |alt| try alt.plain(a) else null };
@@ -379,18 +412,48 @@ test "reads German and English numbers" {
     try testing.expectEqualStrings("1.250", both[1].?);
 }
 
+test "English numbers read a comma before three digits two ways" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const lit = (try tokenize(a, "1,250", .en)).?[0].number;
+    try testing.expectEqual(Notation.either, lit.notation);
+    try testing.expectEqual(Separator.comma, lit.separator);
+    try testing.expectEqualStrings("1.250", try lit.value.plain(a));
+    try testing.expectEqualStrings("1250", try lit.alternative.?.plain(a));
+    // German numbers keep the comma a decimal comma.
+    try testing.expect((try tokenize(a, "1,250", .de)).?[0].number.alternative == null);
+    // Other digit counts are no thousands either way.
+    try testing.expect((try tokenize(a, "3,5", .en)).?[0].number.alternative == null);
+    try testing.expect((try tokenize(a, "0,250", .en)).?[0].number.alternative == null);
+}
+
+test "knows English words" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const tokens = (try tokenize(arena.allocator(), "3 times 4 divided by 2 plus 2 weeks in days", .en)).?;
+    var ops: std.ArrayList(Op) = .empty;
+    for (tokens) |t| switch (t) {
+        .op => |op| try ops.append(arena.allocator(), op),
+        .word => return error.UnexpectedWord,
+        else => {},
+    };
+    try testing.expectEqualSlices(Op, &.{ .mul, .div, .add }, ops.items);
+    try testing.expectEqualStrings("Tage", units.get(tokens[tokens.len - 1].unit).display);
+}
+
 test "refuses dates, versions and times" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     for ([_][]const u8{ "28.10.2026", "0.6.1", "1.2.3", "10:42", "1.23,4.5", "#3" }) |s| {
-        try testing.expect(try tokenize(arena.allocator(), s) == null);
+        try testing.expect(try tokenize(arena.allocator(), s, .de) == null);
     }
 }
 
 test "reads signs from Word and PDFs" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const tokens = (try tokenize(arena.allocator(), "12 − 3 – 1 × 2 ÷ 4 · 5 : 6 x 7")).?;
+    const tokens = (try tokenize(arena.allocator(), "12 − 3 – 1 × 2 ÷ 4 · 5 : 6 x 7", .de)).?;
     var ops: std.ArrayList(Op) = .empty;
     for (tokens) |t| if (t == .op) try ops.append(arena.allocator(), t.op);
     try testing.expectEqualSlices(Op, &.{ .sub, .sub, .mul, .div, .mul, .div, .mul }, ops.items);
@@ -399,7 +462,7 @@ test "reads signs from Word and PDFs" {
 test "knows German words and units" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const tokens = (try tokenize(arena.allocator(), "3 mal 4 geteilt durch 2 zzgl. 19 % von 80 in km/h")).?;
+    const tokens = (try tokenize(arena.allocator(), "3 mal 4 geteilt durch 2 zzgl. 19 % von 80 in km/h", .de)).?;
     var seen: struct {
         mul: bool = false,
         div: bool = false,
@@ -426,7 +489,7 @@ test "knows German words and units" {
 test "keeps unknown words and end marks" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    const tokens = (try tokenize(arena.allocator(), "Netto 1.299,00 € zzgl. 19 % MwSt.")).?;
+    const tokens = (try tokenize(arena.allocator(), "Netto 1.299,00 € zzgl. 19 % MwSt.", .de)).?;
     try testing.expectEqualStrings("Netto", tokens[0].word);
     try testing.expectEqualStrings("MwSt.", tokens[tokens.len - 1].word);
     var currency = false;

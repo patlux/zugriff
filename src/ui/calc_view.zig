@@ -62,8 +62,8 @@ const Entry = struct {
 
 pub const Calculator = struct {
     gpa: Allocator,
-    /// How tasks are read and results written.
-    numbers: Language,
+    /// How tasks are read and results written, and the language of units.
+    locale: core.Locale,
     /// What one keystroke may spend; tests give more, so a busy machine
     /// cannot turn a result into "too complex".
     budget_ns: u64 = budget_ns,
@@ -83,8 +83,8 @@ pub const Calculator = struct {
     /// Several pasted lines, calculated one by one.
     sheet: ?calc.Sheet = null,
 
-    pub fn init(gpa: Allocator, numbers: Language) Calculator {
-        return .{ .gpa = gpa, .numbers = numbers, .arena = .init(gpa) };
+    pub fn init(gpa: Allocator, locale: core.Locale) Calculator {
+        return .{ .gpa = gpa, .locale = locale, .arena = .init(gpa) };
     }
 
     pub fn deinit(k: *Calculator) void {
@@ -147,14 +147,14 @@ pub const Calculator = struct {
             k.showing_history = true;
             return true;
         }
-        k.current = try calc.calculate(k.arena.allocator(), raw, k.budget_ns);
+        k.current = try calc.calculate(k.arena.allocator(), raw, k.budget_ns, k.locale);
         if (k.current != null) try k.query.appendSlice(k.gpa, raw);
         return false;
     }
 
     /// Calculates every pasted line.
     pub fn showSheet(k: *Calculator, lines: []const []const u8) !void {
-        k.sheet = try calc.sheet(k.arena.allocator(), lines, k.budget_ns);
+        k.sheet = try calc.sheet(k.arena.allocator(), lines, k.budget_ns, k.locale);
     }
 
     /// The palette is closing. A result on screen goes into the history and
@@ -300,7 +300,7 @@ pub fn footer(p: *Palette, c: *ui.Context, buf: *[6][]const u8) ?[]const []const
             texts.print(c, p.lang, "last_calculation", .{ago(c, p.lang, since)})
         else if (calculation.skipped.len > 0)
             texts.count(c, p.lang, calculation.skipped.len, "pasted_one", "pasted")
-        else if (calculation.thousands_dot)
+        else if (calculation.ambiguous != null)
             t.two_readings
         else if (calculation.conversion != null)
             t.units
@@ -364,7 +364,7 @@ pub fn body(p: *Palette, c: *ui.Context) !void {
         for (alts, 0..) |alt, i| {
             const symbol = switch (alt.kind) {
                 .share, .before => "%",
-                .decimal_point => "=",
+                .other_notation => "=",
                 .binary => "≈",
             };
             if (calculatorRow(
@@ -609,8 +609,16 @@ fn taskCaption(c: *ui.Context, lang: Language, calculation: calc.Calculation) []
         }
         return texts.print(c, lang, "read_as_skipped", .{list.items});
     }
-    if (calculation.thousands_dot) return t.ambiguous;
+    if (calculation.ambiguous) |separator| return readingText(t, separator, calculation.reading);
     return t.task;
+}
+
+/// How a number that reads two ways was read.
+fn readingText(t: *const texts.Texts, separator: calc.Separator, reading: calc.Reading) []const u8 {
+    return switch (separator) {
+        .dot => if (reading == .german) t.reading_dot_thousands else t.reading_dot_decimal,
+        .comma => if (reading == .english) t.reading_comma_thousands else t.reading_comma_decimal,
+    };
 }
 
 fn resultCaption(lang: Language, calculation: calc.Calculation, ans: calc.Answer) []const u8 {
@@ -664,13 +672,13 @@ fn problemText(
 fn alternativesTitle(lang: Language, alts: []const calc.Alternative) []const u8 {
     const t = texts.of(lang);
     var binary = true;
-    var decimal_point = true;
+    var other_notation = true;
     for (alts) |alt| {
         binary = binary and alt.kind == .binary;
-        decimal_point = decimal_point and alt.kind == .decimal_point;
+        other_notation = other_notation and alt.kind == .other_notation;
     }
     if (binary) return t.also_in;
-    if (decimal_point) return t.other_reading;
+    if (other_notation) return t.other_reading;
     return t.also_possible;
 }
 
@@ -683,7 +691,12 @@ fn alternativeSubtitle(c: *ui.Context, lang: Language, numbers: Language, alt: c
             "{s} · {s}",
             .{ task, if (surcharge) t.surcharge_included else t.discount_included },
         ),
-        .decimal_point => texts.print(c, lang, "other_notation", .{task}),
+        .other_notation => |o| texts.print(
+            c,
+            lang,
+            "other_notation",
+            .{ task, readingText(t, o.separator, o.reading) },
+        ),
         .binary => |unit| texts.print(c, lang, "binary", .{ unit, binaryBytes(numbers, unit) }),
     };
 }

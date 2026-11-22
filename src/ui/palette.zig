@@ -131,7 +131,7 @@ pub const Palette = struct {
             .host = host,
             .placeholder = texts.of(locale.language).search_placeholder,
             .catalog = .empty(gpa),
-            .calc = .init(gpa, locale.numbers),
+            .calc = .init(gpa, locale),
             .glyphs = .init(gpa),
             .scratch = .init(gpa),
         };

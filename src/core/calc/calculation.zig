@@ -1,5 +1,6 @@
 //! Turns a query into a calculation: recognise it, evaluate it and format
-//! the answer the German way.
+//! the answer in the notation of the locale's numbers, German (`1.545,81 €`)
+//! or English (`€1,545.81`).
 //!
 //! Everything a calculation returns lives in the arena it is given.
 const std = @import("std");
@@ -10,12 +11,16 @@ const syntax = @import("syntax.zig");
 const eval = @import("eval.zig");
 const units = @import("units.zig");
 const text = @import("../text.zig");
+const language = @import("../language.zig");
+const Language = language.Language;
+const Locale = language.Locale;
 const Token = lexer.Token;
 const Literal = lexer.Literal;
 const Expr = syntax.Expr;
 const Task = syntax.Task;
-const Reading = syntax.Reading;
 pub const Gap = syntax.Gap;
+pub const Reading = syntax.Reading;
+pub const Separator = lexer.Separator;
 pub const Deadline = eval.Deadline;
 
 /// Digits a result keeps when it does not come out exact.
@@ -30,9 +35,12 @@ pub const Calculation = struct {
     task: []const u8,
     /// Words at the edges of a pasted task that were left out, as written.
     skipped: []const []const u8 = &.{},
-    /// A dot before three digits was read as a thousands separator; the
-    /// other reading is one of the alternatives.
-    thousands_dot: bool = false,
+    /// How the numbers of the task were read.
+    reading: Reading = .german,
+    /// A number reads two ways, at this separator (`1.250`, `1,250`); the
+    /// task was read the way of the locale's numbers, and the other reading
+    /// is one of the alternatives.
+    ambiguous: ?Separator = null,
     /// The query started with `=`, so even a lone value counts.
     forced: bool = false,
     conversion: ?Conversion = null,
@@ -170,8 +178,8 @@ pub const AlternativeKind = union(enum) {
     share: bool,
     /// `base ± p %` read backwards: the value before the percentage.
     before: bool,
-    /// The dot before three digits as a decimal point.
-    decimal_point,
+    /// The number that reads two ways, read the other way.
+    other_notation: struct { reading: Reading, separator: Separator },
     /// A decimal data size in binary units (`MiB`).
     binary: []const u8,
 };
@@ -183,20 +191,22 @@ pub const Mode = enum {
     line,
 };
 
-/// Recognises `raw` as a task and evaluates it within `budget_ns`.
+/// Recognises `raw` as a task and evaluates it within `budget_ns`, for
+/// `locale`: its numbers decide how `1.250` reads and how the result is
+/// written, its language names units and words.
 ///
 /// Null keeps the query a search: a single number, a word or a constant is
 /// not a task, and neither is anything with an unknown word between
 /// numbers. `=` at the start makes every readable value a task.
-pub fn calculate(a: Allocator, raw: []const u8, budget_ns: u64) !?Calculation {
-    return calculateIn(a, raw, .query, Deadline.after(budget_ns));
+pub fn calculate(a: Allocator, raw: []const u8, budget_ns: u64, locale: Locale) !?Calculation {
+    return calculateIn(a, raw, .query, Deadline.after(budget_ns), locale);
 }
 
-pub fn calculateIn(a: Allocator, raw: []const u8, mode: Mode, deadline: Deadline) !?Calculation {
+pub fn calculateIn(a: Allocator, raw: []const u8, mode: Mode, deadline: Deadline, locale: Locale) !?Calculation {
     const trimmed = text.trim(raw);
     const forced = std.mem.startsWith(u8, trimmed, "=");
     const body = if (forced) text.trim(trimmed[1..]) else trimmed;
-    const tokens = try lexer.tokenize(a, body) orelse return null;
+    const tokens = try lexer.tokenize(a, body, locale.numbers) orelse return null;
     const edges = try trimEdges(a, tokens);
     const core = edges.core;
     if (core.len == 0) return null;
@@ -232,11 +242,17 @@ pub fn calculateIn(a: Allocator, raw: []const u8, mode: Mode, deadline: Deadline
 
     // The other numbers of a task decide how to read `1.250`: next to
     // `89,90` it is German, next to `3.14` English, and on its own Zugriff
-    // reads it German and offers the English reading too.
+    // reads it the way of the locale's numbers and offers the other reading.
     var seen: NotationSeen = .{};
     syntax.literals(task.expr, &seen);
-    const reading: Reading = if (seen.english and !seen.german) .english else .german;
-    const ambiguous = seen.either and !seen.german and !seen.english;
+    const usual: Reading = if (locale.numbers == .de) .german else .english;
+    const reading: Reading = if (seen.english and !seen.german)
+        .english
+    else if (seen.german and !seen.english)
+        .german
+    else
+        usual;
+    const ambiguous: ?Separator = if (seen.either and !seen.german and !seen.english) seen.separator else null;
     const conversion: ?Conversion = if (task.target) |t| switch (t) {
         .unit => |u| switch (units.get(u).kind) {
             .decimal_data => .decimal_data,
@@ -245,15 +261,16 @@ pub fn calculateIn(a: Allocator, raw: []const u8, mode: Mode, deadline: Deadline
         .percent, .currency => null,
     } else null;
 
-    const outcome = try evaluate(a, task, reading, deadline);
+    const outcome = try evaluate(a, task, reading, deadline, locale);
     const alts: []const Alternative = switch (outcome) {
-        .answer => |ans| try alternatives(a, task, ans, reading, ambiguous, deadline),
+        .answer => |ans| try alternatives(a, task, ans, reading, ambiguous, deadline, locale),
         .problem => &.{},
     };
     return .{
-        .task = try task.show(a, reading),
+        .task = try task.show(a, reading, locale),
         .skipped = edges.skipped,
-        .thousands_dot = ambiguous,
+        .reading = reading,
+        .ambiguous = ambiguous,
         .forced = forced,
         .conversion = conversion,
         .outcome = outcome,
@@ -266,10 +283,13 @@ const NotationSeen = struct {
     german: bool = false,
     english: bool = false,
     either: bool = false,
+    /// The separator of the first number that reads two ways.
+    separator: Separator = .dot,
 
     pub fn literal(s: *NotationSeen, lit: Literal) void {
         s.german = s.german or lit.notation == .german;
         s.english = s.english or lit.notation == .english;
+        if (lit.alternative != null and !s.either) s.separator = lit.separator;
         s.either = s.either or lit.alternative != null;
     }
 };
@@ -337,7 +357,7 @@ fn styleOf(task: Task, reading: Reading) ?Style {
     return .{ .currency = if (n > 0) found[0] else null, .cents = cents.any };
 }
 
-fn evaluate(a: Allocator, task: Task, reading: Reading, deadline: Deadline) !Outcome {
+fn evaluate(a: Allocator, task: Task, reading: Reading, deadline: Deadline, locale: Locale) !Outcome {
     const style = styleOf(task, reading) orelse return .{ .problem = .no_rates };
     var ev: eval.Evaluator = .{ .a = a, .reading = reading, .deadline = deadline };
     const target: eval.Target = if (task.target) |t| switch (t) {
@@ -347,9 +367,9 @@ fn evaluate(a: Allocator, task: Task, reading: Reading, deadline: Deadline) !Out
     } else .none;
     const out = blk: {
         const value = ev.eval(task.expr) catch |e| return problemOf(e);
-        break :blk eval.output(a, value, target) catch |e| return problemOf(e);
+        break :blk eval.output(a, value, target, locale.language) catch |e| return problemOf(e);
     };
-    return .{ .answer = try formatAnswer(a, out, style) };
+    return .{ .answer = try formatAnswer(a, out, style, locale.numbers) };
 }
 
 fn problemOf(e: eval.Error) !Outcome {
@@ -363,19 +383,27 @@ fn problemOf(e: eval.Error) !Outcome {
     } };
 }
 
-fn formatAnswer(a: Allocator, out: eval.Output, style: Style) !Answer {
+fn formatAnswer(a: Allocator, out: eval.Output, style: Style, numbers: Language) !Answer {
     const lab: Label = if (out.unit.len == 0)
         (if (style.currency) |c| .{ .currency = c } else .none)
     else if (std.mem.eql(u8, out.unit, "%")) .percent else .{ .unit = out.unit };
-    return formatValue(a, out.value, out.approximate, lab, style.cents);
+    return formatValue(a, out.value, out.approximate, lab, style.cents, numbers);
 }
 
-pub fn formatValue(a: Allocator, value: Decimal, approximate: bool, lab: Label, cents: bool) !Answer {
+/// The answer for `value`, written in the notation of `numbers`.
+pub fn formatValue(
+    a: Allocator,
+    value: Decimal,
+    approximate: bool,
+    lab: Label,
+    cents: bool,
+    numbers: Language,
+) !Answer {
     const tiny = !value.isZero() and value.intDigits() == 0 and value.leadingZeros() >= 6;
     if (value.intDigits() > max_integer_digits or tiny) {
         const sci = try value.scientific(a, significant_digits);
         return .{
-            .text = try withLabel(a, try sci.german(a), lab),
+            .text = try withLabel(a, try sci.format(a, numbers), lab, numbers),
             .number = try sci.plain(a),
             .rounding = if (approximate or sci.lost) .significant else null,
             .value = value,
@@ -411,7 +439,7 @@ pub fn formatValue(a: Allocator, value: Decimal, approximate: bool, lab: Label, 
         },
     }
     return .{
-        .text = try withLabel(a, try shown.german(a), lab),
+        .text = try withLabel(a, try shown.format(a, numbers), lab, numbers),
         .number = try shown.plain(a),
         .rounding = if (approximate or lost) rounding else null,
         .value = shown,
@@ -429,11 +457,18 @@ fn plainRounding(a: Allocator, value: Decimal, approximate: bool, cents: bool, s
     lost.* = r.lost;
 }
 
-fn withLabel(a: Allocator, number: []const u8, lab: Label) ![]const u8 {
+/// German `95,2 %` and `1.545,81 €`, English `95.2%`, `€1,545.81` and
+/// `CHF 12.50`; units follow the number in both.
+fn withLabel(a: Allocator, number: []const u8, lab: Label, numbers: Language) ![]const u8 {
     return switch (lab) {
         .none => number,
-        .percent => a.print("{s} %", .{number}),
-        .currency => |c| a.print("{s} {s}", .{ number, c }),
+        .percent => if (numbers == .de) a.print("{s} %", .{number}) else a.print("{s}%", .{number}),
+        .currency => |c| if (numbers == .de)
+            a.print("{s} {s}", .{ number, c })
+        else if (std.mem.startsWith(u8, number, "-"))
+            a.print("-{s}{s}{s}", .{ c, if (syntax.isSymbol(c)) "" else " ", number[1..] })
+        else
+            a.print("{s}{s}{s}", .{ c, if (syntax.isSymbol(c)) "" else " ", number }),
         .unit => |u| if (std.mem.eql(u8, u, "°")) a.print("{s}°", .{number}) else a.print("{s} {s}", .{ number, u }),
     };
 }
@@ -444,12 +479,13 @@ const Pusher = struct {
     found: *std.ArrayList(Alternative),
     main: Answer,
     deadline: Deadline,
+    locale: Locale,
 
     fn push(p: Pusher, t: Task, kind: AlternativeKind, r: Reading) !void {
         if (p.deadline.passed()) return;
-        switch (try evaluate(p.a, t, r, p.deadline)) {
+        switch (try evaluate(p.a, t, r, p.deadline, p.locale)) {
             .answer => |other| if (!std.mem.eql(u8, other.text, p.main.text)) {
-                try p.found.append(p.a, .{ .task = try t.show(p.a, r), .answer = other, .kind = kind });
+                try p.found.append(p.a, .{ .task = try t.show(p.a, r, p.locale), .answer = other, .kind = kind });
             },
             .problem => {},
         }
@@ -461,11 +497,12 @@ fn alternatives(
     task: Task,
     ans: Answer,
     reading: Reading,
-    ambiguous: bool,
+    ambiguous: ?Separator,
     deadline: Deadline,
+    locale: Locale,
 ) ![]const Alternative {
     var found: std.ArrayList(Alternative) = .empty;
-    const pusher: Pusher = .{ .a = a, .found = &found, .main = ans, .deadline = deadline };
+    const pusher: Pusher = .{ .a = a, .found = &found, .main = ans, .deadline = deadline, .locale = locale };
 
     if (task.target == null) switch (task.expr.*) {
         .adjust => |adj| {
@@ -490,7 +527,10 @@ fn alternatives(
         else => {},
     };
 
-    if (ambiguous) try pusher.push(task, .decimal_point, .english);
+    if (ambiguous) |separator| {
+        const other: Reading = if (reading == .german) .english else .german;
+        try pusher.push(task, .{ .other_notation = .{ .reading = other, .separator = separator } }, other);
+    }
 
     if (task.target) |t| if (t == .unit) switch (units.get(t.unit).kind) {
         .decimal_data => |binary| {
@@ -526,7 +566,15 @@ const Fixture = struct {
         f.* = undefined;
     }
     fn calc(f: *Fixture, raw: []const u8) !?Calculation {
-        return calculate(f.arena.allocator(), raw, budget);
+        return calculate(f.arena.allocator(), raw, budget, .both(.de));
+    }
+    fn calcIn(f: *Fixture, raw: []const u8, locale: Locale) !?Calculation {
+        return calculate(f.arena.allocator(), raw, budget, locale);
+    }
+    fn answerIn(f: *Fixture, raw: []const u8, locale: Locale) ![]const u8 {
+        const c = (try f.calcIn(raw, locale)) orelse return error.NotATask;
+        const ans = c.answer() orelse return error.NoAnswer;
+        return ans.shown(f.arena.allocator());
     }
     fn answer(f: *Fixture, raw: []const u8) ![]const u8 {
         const c = (try f.calc(raw)) orelse return error.NotATask;
@@ -601,14 +649,14 @@ test "offers the English reading of a dot" {
     defer f.deinit();
     const a = f.arena.allocator();
     const c = (try f.calc("1.250 × 4")).?;
-    try testing.expect(c.thousands_dot);
+    try testing.expectEqual(Separator.dot, c.ambiguous.?);
     try testing.expectEqualStrings("5.000", try c.answer().?.shown(a));
     try testing.expectEqual(@as(usize, 1), c.alternatives.len);
     try testing.expectEqualStrings("1,250 × 4", c.alternatives[0].task);
     try testing.expectEqualStrings("5", try c.alternatives[0].answer.shown(a));
     try testing.expectEqual(@as(usize, 0), (try f.calc("3.14 × 2")).?.alternatives.len);
     const german = (try f.calc("(1.299 + 89,90) × 3")).?;
-    try testing.expect(!german.thousands_dot);
+    try testing.expect(german.ambiguous == null);
     try testing.expectEqual(@as(usize, 0), german.alternatives.len);
     const english = (try f.calc("3.5 × 1.250")).?;
     try testing.expectEqualStrings("4,375", try english.answer().?.shown(a));
@@ -672,9 +720,71 @@ test "leaves searches alone" {
     }
 }
 
+test "calculates in English notation" {
+    var f: Fixture = .init();
+    defer f.deinit();
+    const en: Locale = .both(.en);
+    const cases = [_]struct { []const u8, []const u8 }{
+        .{ "(1,299 + 89.90) × 3", "4,166.70" },
+        .{ "80 + 19 %", "95.2" },
+        .{ "15 of 60 in %", "25%" },
+        .{ "$1,299 + 19%", "$1,545.81" },
+        .{ "12 CHF times 3", "CHF 36" },
+        .{ "-5 € × 2", "-€10" },
+        .{ "2 weeks in days", "14 days" },
+        .{ "24 h in days", "1 day" },
+        .{ "30 cm in inches", "≈ 11.81 inches" },
+        .{ "2,4 GB in MB", "2,400 MB" },
+        .{ "2.4 GB in MB", "2,400 MB" },
+        .{ "100 divided by 8", "12.5" },
+        .{ "2^100", "≈ 1.26765060023 × 10³⁰" },
+    };
+    for (cases) |c| {
+        const got = try f.answerIn(c[0], en);
+        if (!std.mem.eql(u8, c[1], got)) std.debug.print("{s}: {s}\n", .{ c[0], got });
+        try testing.expectEqualStrings(c[1], got);
+    }
+}
+
+test "English notation reads 1,250 and 1.250 its way and offers the German one" {
+    var f: Fixture = .init();
+    defer f.deinit();
+    const a = f.arena.allocator();
+    const en: Locale = .both(.en);
+    const comma = (try f.calcIn("1,250 × 4", en)).?;
+    try testing.expectEqual(Separator.comma, comma.ambiguous.?);
+    try testing.expectEqual(Reading.english, comma.reading);
+    try testing.expectEqualStrings("5,000", try comma.answer().?.shown(a));
+    try testing.expectEqual(@as(usize, 1), comma.alternatives.len);
+    try testing.expectEqualStrings("1.250 × 4", comma.alternatives[0].task);
+    try testing.expectEqualStrings("5", try comma.alternatives[0].answer.shown(a));
+    try testing.expectEqual(Reading.german, comma.alternatives[0].kind.other_notation.reading);
+
+    const dot = (try f.calcIn("1.250 × 4", en)).?;
+    try testing.expectEqual(Separator.dot, dot.ambiguous.?);
+    try testing.expectEqualStrings("5", try dot.answer().?.shown(a));
+    try testing.expectEqualStrings("1,250 × 4", dot.alternatives[0].task);
+    try testing.expectEqualStrings("5,000", try dot.alternatives[0].answer.shown(a));
+
+    // A German number elsewhere settles it, also in English notation.
+    const german = (try f.calcIn("1.250 + 0,5", en)).?;
+    try testing.expect(german.ambiguous == null);
+    try testing.expectEqualStrings("1,250.5", try german.answer().?.shown(a));
+}
+
+test "English texts with German numbers" {
+    var f: Fixture = .init();
+    defer f.deinit();
+    const mixed: Locale = .{ .language = .en, .numbers = .de };
+    try testing.expectEqualStrings("1.545,81 €", try f.answerIn("1.299 € + 19 %", mixed));
+    try testing.expectEqualStrings("14 days", try f.answerIn("2 Wochen in Tage", mixed));
+    const c = (try f.calcIn("19 % von 80", mixed)).?;
+    try testing.expectEqualStrings("19 % of 80", c.task);
+}
+
 test "stops when the result is too large" {
     var f: Fixture = .init();
     defer f.deinit();
-    const c = (try calculate(f.arena.allocator(), "2^(2^(2^20))", 5 * std.time.ns_per_ms)).?;
+    const c = (try calculate(f.arena.allocator(), "2^(2^(2^20))", 5 * std.time.ns_per_ms, .both(.de))).?;
     try testing.expect(c.outcome.problem.eql(.too_slow));
 }

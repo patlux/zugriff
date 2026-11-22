@@ -1,10 +1,14 @@
 //! The units the calculator knows: how they are spelled, shown, and what
 //! they are worth in base units.
 //!
+//! Units are typed in German or English, and shown in the language of the
+//! palette where their names differ (`Tage`, `days`).
+//!
 //! Base units: metre, kilogram, second, bit, kelvin and the degree of arc.
 //! Every factor is an exact ratio, so conversions stay exact; only °C and
 //! °F carry an offset as well.
 const std = @import("std");
+const Language = @import("../language.zig").Language;
 
 pub const dimension_count = 6;
 /// Powers of length, mass, time, data, temperature and angle.
@@ -42,12 +46,23 @@ pub const Unit = struct {
     display: []const u8,
     /// The answer's name for exactly one (`1 Tag`); `display` otherwise.
     one: ?[]const u8 = null,
+    /// The English names where they differ from `display` and `one`.
+    english: ?[]const u8 = null,
+    english_one: ?[]const u8 = null,
     dims: Dims,
     /// Base units per unit.
     factor: Ratio,
     /// Added before scaling to the base unit (°C and °F to kelvin).
     offset: Ratio = .{ .num = 0 },
     kind: Kind = .other,
+
+    /// The name in `language`; `count_one` for exactly one (`1 Tag`, `1 day`).
+    pub fn name(u: Unit, language: Language, count_one: bool) []const u8 {
+        return switch (language) {
+            .de => if (count_one) u.one orelse u.display else u.display,
+            .en => if (count_one) u.english_one orelse u.english orelse u.display else u.english orelse u.display,
+        };
+    }
 };
 
 /// An index into `all`.
@@ -55,13 +70,13 @@ pub const Id = u16;
 
 pub const all = [_]Unit{
     .{
-        .spellings = &.{ "mm", "millimeter" },
+        .spellings = &.{ "mm", "millimeter", "millimeters" },
         .display = "mm",
         .dims = length,
         .factor = .{ .num = 1, .den = 1000 },
     },
     .{
-        .spellings = &.{ "cm", "zentimeter" },
+        .spellings = &.{ "cm", "zentimeter", "centimeter", "centimeters" },
         .display = "cm",
         .dims = length,
         .factor = .{ .num = 1, .den = 100 },
@@ -73,13 +88,13 @@ pub const all = [_]Unit{
         .factor = .{ .num = 1, .den = 10 },
     },
     .{
-        .spellings = &.{ "m", "meter" },
+        .spellings = &.{ "m", "meter", "meters", "metre", "metres" },
         .display = "m",
         .dims = length,
         .factor = .{ .num = 1 },
     },
     .{
-        .spellings = &.{ "km", "kilometer" },
+        .spellings = &.{ "km", "kilometer", "kilometers" },
         .display = "km",
         .dims = length,
         .factor = .{ .num = 1000 },
@@ -91,13 +106,13 @@ pub const all = [_]Unit{
         .factor = .{ .num = 1609344, .den = 1000 },
     },
     .{
-        .spellings = &.{ "ft", "fuß", "feet" },
+        .spellings = &.{ "ft", "fuß", "feet", "foot" },
         .display = "ft",
         .dims = length,
         .factor = .{ .num = 3048, .den = 10000 },
     },
     .{
-        .spellings = &.{"yd"},
+        .spellings = &.{ "yd", "yard", "yards" },
         .display = "yd",
         .dims = length,
         .factor = .{ .num = 9144, .den = 10000 },
@@ -105,53 +120,56 @@ pub const all = [_]Unit{
     .{
         .spellings = &.{ "zoll", "inch", "inches" },
         .display = "Zoll",
+        .english = "inches",
+        .english_one = "inch",
         .dims = length,
         .factor = .{ .num = 254, .den = 10000 },
     },
     .{
         .spellings = &.{ "nmi", "sm", "seemeile", "seemeilen" },
         .display = "sm",
+        .english = "nmi",
         .dims = length,
         .factor = .{ .num = 1852 },
     },
     .{
-        .spellings = &.{ "mg", "milligramm" },
+        .spellings = &.{ "mg", "milligramm", "milligram", "milligrams" },
         .display = "mg",
         .dims = mass,
         .factor = .{ .num = 1, .den = 1_000_000 },
     },
     .{
-        .spellings = &.{ "g", "gramm" },
+        .spellings = &.{ "g", "gramm", "gram", "grams" },
         .display = "g",
         .dims = mass,
         .factor = .{ .num = 1, .den = 1000 },
     },
     .{
-        .spellings = &.{ "kg", "kilo", "kilogramm" },
+        .spellings = &.{ "kg", "kilo", "kilogramm", "kilogram", "kilograms" },
         .display = "kg",
         .dims = mass,
         .factor = .{ .num = 1 },
     },
     .{
-        .spellings = &.{ "tonne", "tonnen" },
+        .spellings = &.{ "tonne", "tonnen", "tonnes" },
         .display = "t",
         .dims = mass,
         .factor = .{ .num = 1000 },
     },
     .{
-        .spellings = &.{ "lb", "lbs" },
+        .spellings = &.{ "lb", "lbs", "pound", "pounds" },
         .display = "lb",
         .dims = mass,
         .factor = .{ .num = 45359237, .den = 100_000_000 },
     },
     .{
-        .spellings = &.{ "oz", "unze", "unzen" },
+        .spellings = &.{ "oz", "unze", "unzen", "ounce", "ounces" },
         .display = "oz",
         .dims = mass,
         .factor = .{ .num = 45359237, .den = 1_600_000_000 },
     },
     .{
-        .spellings = &.{ "ml", "milliliter" },
+        .spellings = &.{ "ml", "milliliter", "milliliters" },
         .display = "ml",
         .dims = volume,
         .factor = .{ .num = 1, .den = 1_000_000 },
@@ -169,79 +187,91 @@ pub const all = [_]Unit{
         .factor = .{ .num = 1, .den = 10_000 },
     },
     .{
-        .spellings = &.{ "l", "liter" },
+        .spellings = &.{ "l", "liter", "liters", "litre", "litres" },
         .display = "l",
         .dims = volume,
         .factor = .{ .num = 1, .den = 1000 },
     },
     .{
-        .spellings = &.{ "gal", "gallone", "gallonen" },
+        .spellings = &.{ "gal", "gallone", "gallonen", "gallon", "gallons" },
         .display = "gal",
         .dims = volume,
         .factor = .{ .num = 3785411784, .den = 1_000_000_000_000 },
     },
     .{
-        .spellings = &.{ "ms", "millisekunde", "millisekunden" },
+        .spellings = &.{ "ms", "millisekunde", "millisekunden", "millisecond", "milliseconds" },
         .display = "ms",
         .dims = time,
         .factor = .{ .num = 1, .den = 1000 },
     },
     .{
-        .spellings = &.{ "s", "sek", "sekunde", "sekunden" },
+        .spellings = &.{ "s", "sek", "sekunde", "sekunden", "sec", "second", "seconds" },
         .display = "s",
         .dims = time,
         .factor = .{ .num = 1 },
     },
     .{
-        .spellings = &.{ "min", "minute", "minuten" },
+        .spellings = &.{ "min", "minute", "minuten", "minutes" },
         .display = "min",
         .dims = time,
         .factor = .{ .num = 60 },
     },
     .{
-        .spellings = &.{ "h", "std", "stunde", "stunden" },
+        .spellings = &.{ "h", "std", "stunde", "stunden", "hr", "hrs", "hour", "hours" },
         .display = "h",
         .dims = time,
         .factor = .{ .num = 3600 },
     },
     .{
-        .spellings = &.{ "tag", "tage", "tagen" },
+        .spellings = &.{ "tag", "tage", "tagen", "day", "days" },
         .display = "Tage",
         .one = "Tag",
+        .english = "days",
+        .english_one = "day",
         .dims = time,
         .factor = .{ .num = 86400 },
     },
     .{
-        .spellings = &.{ "woche", "wochen" },
+        .spellings = &.{ "woche", "wochen", "week", "weeks" },
         .display = "Wochen",
         .one = "Woche",
+        .english = "weeks",
+        .english_one = "week",
         .dims = time,
         .factor = .{ .num = 604800 },
     },
     // A tropical year of 365,2422 days, as fend counts it; a month is its twelfth.
     .{
-        .spellings = &.{ "monat", "monate", "monaten" },
+        .spellings = &.{ "monat", "monate", "monaten", "month", "months" },
         .display = "Monate",
         .one = "Monat",
+        .english = "months",
+        .english_one = "month",
         .dims = time,
         .factor = .{ .num = 262974384, .den = 100 },
     },
     .{
-        .spellings = &.{ "jahr", "jahre", "jahren" },
+        .spellings = &.{ "jahr", "jahre", "jahren", "year", "years" },
         .display = "Jahre",
         .one = "Jahr",
+        .english = "years",
+        .english_one = "year",
         .dims = time,
         .factor = .{ .num = 3155692608, .den = 100 },
     },
     .{
         .spellings = &.{ "b", "byte", "bytes" },
         .display = "Byte",
+        .english = "bytes",
+        .english_one = "byte",
         .dims = data,
         .factor = .{ .num = 8 },
     },
     .{
         .spellings = &.{ "bit", "bits" },
         .display = "Bit",
+        .english = "bits",
+        .english_one = "bit",
         .dims = data,
         .factor = .{ .num = 1 },
     },
@@ -316,7 +346,7 @@ pub const all = [_]Unit{
         .factor = .{ .num = 1609344, .den = 3_600_000 },
     },
     .{
-        .spellings = &.{ "kn", "knoten" },
+        .spellings = &.{ "kn", "knoten", "knot", "knots" },
         .display = "kn",
         .dims = speed,
         .factor = .{ .num = 1852, .den = 3600 },
@@ -342,7 +372,7 @@ pub const all = [_]Unit{
         .factor = .{ .num = 1 },
     },
     .{
-        .spellings = &.{ "°", "grad" },
+        .spellings = &.{ "°", "grad", "degree", "degrees" },
         .display = "°",
         .dims = angle,
         .factor = .{ .num = 1 },
@@ -361,7 +391,7 @@ pub const all = [_]Unit{
         .factor = .{ .num = 1_000_000 },
     },
     .{
-        .spellings = &.{ "ha", "hektar" },
+        .spellings = &.{ "ha", "hektar", "hectare", "hectares" },
         .display = "ha",
         .dims = area,
         .factor = .{ .num = 10_000 },
@@ -438,6 +468,17 @@ pub fn byDisplay(display: []const u8) Id {
 
 pub fn get(id: Id) Unit {
     return all[id];
+}
+
+test "units name themselves in either language" {
+    const days = get(bySpelling("days").?);
+    try std.testing.expectEqualStrings("Tage", days.name(.de, false));
+    try std.testing.expectEqualStrings("Tag", days.name(.de, true));
+    try std.testing.expectEqualStrings("days", days.name(.en, false));
+    try std.testing.expectEqualStrings("day", days.name(.en, true));
+    const km = get(bySpelling("kilometers").?);
+    try std.testing.expectEqualStrings("km", km.name(.en, true));
+    try std.testing.expectEqualStrings("inches", get(bySpelling("zoll").?).name(.en, false));
 }
 
 test "every unit is found by its spellings and data units name their binary twin" {

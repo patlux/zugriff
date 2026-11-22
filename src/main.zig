@@ -233,7 +233,7 @@ fn warmIcons(a: std.mem.Allocator, io: std.Io, home: ?[]const u8, out: *std.Io.W
 fn printCalculation(a: std.mem.Allocator, out: *std.Io.Writer, loc: core.Locale, task: []const u8) !void {
     const lang = loc.language;
     const started = agent.nowUs();
-    const calculation = try core.calc.calculate(a, task, 500 * std.time.ns_per_ms);
+    const calculation = try core.calc.calculate(a, task, 500 * std.time.ns_per_ms, loc);
     const elapsed = agent.nowUs() - started;
     const c = calculation orelse return out.writeAll(messages.of(lang).calc_none);
     try messages.print(out, lang, "calc_task", .{c.task});

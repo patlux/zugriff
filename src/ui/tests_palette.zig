@@ -114,11 +114,15 @@ pub const Harness = struct {
         return h.initIn(apps, .de);
     }
 
-    /// A palette that speaks `lang`.
+    /// A palette that speaks `lang` and writes numbers its way.
     pub fn initIn(h: *Harness, apps: []const Item, lang: core.Language) !void {
+        return h.initLocale(apps, .both(lang));
+    }
+
+    pub fn initLocale(h: *Harness, apps: []const Item, locale: core.Locale) !void {
         h.fake = .{ .arena = .init(testing.allocator) };
         const home = std.mem.span(std.c.getenv("HOME").?);
-        h.palette = .init(testing.allocator, testing.io, home, .both(lang), h.fake.host());
+        h.palette = .init(testing.allocator, testing.io, home, locale, h.fake.host());
         // The palette's 10 ms are for a person typing; under a loaded test
         // run they would drop results at random.
         h.palette.calc.budget_ns = test_budget_ns;

@@ -1,4 +1,6 @@
-//! The structure of a task: parsing tokens and showing the task in German.
+//! The structure of a task: parsing tokens and showing the task again, its
+//! numbers in German or English notation and its words in the palette's
+//! language.
 //!
 //! Percentages follow the pocket calculator: `80 + 19 %` is 95,20 and
 //! `80 × 19 %` is 15,20. The tree keeps them as written (`adjust`,
@@ -8,6 +10,7 @@ const Allocator = std.mem.Allocator;
 const Decimal = @import("decimal.zig").Decimal;
 const lexer = @import("lexer.zig");
 const units = @import("units.zig");
+const Locale = @import("../language.zig").Locale;
 const Token = lexer.Token;
 const Literal = lexer.Literal;
 const Op = lexer.Op;
@@ -53,12 +56,14 @@ pub const Task = struct {
         return t.target != null or computesExpr(t.expr);
     }
 
-    /// The task as Zugriff read it, in German notation.
-    pub fn show(t: Task, a: Allocator, reading: Reading) ![]u8 {
+    /// The task as Zugriff read it (`reading`), shown for `locale`:
+    /// `1.299,00 € + 19 % von 80` or `€1,299.00 + 19% of 80`.
+    pub fn show(t: Task, a: Allocator, reading: Reading, locale: Locale) ![]u8 {
         var out: std.ArrayList(u8) = .empty;
-        try showExpr(a, t.expr, reading, &out);
+        const s: Shower = .{ .a = a, .reading = reading, .locale = locale, .out = &out };
+        try s.expr(t.expr);
         if (t.target) |target| switch (target) {
-            .unit => |u| try out.print(a, " in {s}", .{units.get(u).display}),
+            .unit => |u| try out.print(a, " in {s}", .{units.get(u).name(locale.language, false)}),
             .percent => try out.appendSlice(a, " in %"),
             .currency => |c| try out.print(a, " in {s}", .{c}),
         };
@@ -326,68 +331,97 @@ pub fn literalValue(lit: Literal, reading: Reading) Decimal {
     return lit.value;
 }
 
-fn showExpr(a: Allocator, e: *const Expr, reading: Reading, out: *std.ArrayList(u8)) Allocator.Error!void {
-    switch (e.*) {
-        .number => |lit| try out.appendSlice(a, try literalValue(lit, reading).german(a)),
-        .constant => |k| try out.appendSlice(a, if (k == .pi) "π" else "e"),
-        .unit => |u| try out.appendSlice(a, units.get(u).display),
-        .quantity => |q| {
-            try showExpr(a, q.value, reading, out);
-            if (units.get(q.unit).kind != .angle) try out.append(a, ' ');
-            try out.appendSlice(a, units.get(q.unit).display);
-        },
-        .money => |m| {
-            try showExpr(a, m.value, reading, out);
-            try out.print(a, " {s}", .{m.currency});
-        },
-        .group => |inner| {
-            try out.append(a, '(');
-            try showExpr(a, inner, reading, out);
-            try out.append(a, ')');
-        },
-        .neg => |inner| {
-            try out.appendSlice(a, "−");
-            try showExpr(a, inner, reading, out);
-        },
-        .binary => |b| {
-            try showExpr(a, b.left, reading, out);
-            if (b.op == .pow) {
-                try out.append(a, '^');
-            } else try out.print(a, " {s} ", .{b.op.sign()});
-            try showExpr(a, b.right, reading, out);
-        },
-        .joined => |j| {
-            try showExpr(a, j.left, reading, out);
-            try out.append(a, ' ');
-            try showExpr(a, j.right, reading, out);
-        },
-        .percent => |inner| {
-            try showExpr(a, inner, reading, out);
-            try out.appendSlice(a, " %");
-        },
-        .of => |o| {
-            try showExpr(a, o.left, reading, out);
-            try out.appendSlice(a, " von ");
-            try showExpr(a, o.right, reading, out);
-        },
-        .adjust => |adj| {
-            try showExpr(a, adj.base, reading, out);
-            try out.print(a, " {s} ", .{adj.op.sign()});
-            try showExpr(a, adj.percent, reading, out);
-            try out.appendSlice(a, " %");
-        },
-        .func => |f| {
-            if (f.func == .sqrt) {
-                try out.appendSlice(a, "√");
-                try showExpr(a, f.arg, reading, out);
-                return;
-            }
-            try out.print(a, "{s}(", .{funcName(f.func)});
-            try showExpr(a, unwrapGroup(f.arg), reading, out);
-            if (isTrig(f.func) and !hasAngle(f.arg)) try out.appendSlice(a, "°");
-            try out.append(a, ')');
-        },
+/// Writes an expression the way `Task.show` shows it.
+const Shower = struct {
+    a: Allocator,
+    reading: Reading,
+    locale: Locale,
+    out: *std.ArrayList(u8),
+
+    fn put(s: Shower, bytes: []const u8) !void {
+        try s.out.appendSlice(s.a, bytes);
     }
+
+    /// `19 %` in German notation, `19%` in English.
+    fn percentSign(s: Shower) !void {
+        try s.put(if (s.locale.numbers == .de) " %" else "%");
+    }
+
+    fn expr(s: Shower, e: *const Expr) Allocator.Error!void {
+        const a = s.a;
+        switch (e.*) {
+            .number => |lit| try s.put(try literalValue(lit, s.reading).format(a, s.locale.numbers)),
+            .constant => |k| try s.put(if (k == .pi) "π" else "e"),
+            .unit => |u| try s.put(units.get(u).name(s.locale.language, false)),
+            .quantity => |q| {
+                try s.expr(q.value);
+                if (units.get(q.unit).kind != .angle) try s.put(" ");
+                try s.put(units.get(q.unit).name(s.locale.language, false));
+            },
+            .money => |m| if (s.locale.numbers == .de) {
+                try s.expr(m.value);
+                try s.out.print(a, " {s}", .{m.currency});
+            } else {
+                // `$1,299.00`, `CHF 1,299.00`.
+                try s.put(m.currency);
+                if (!isSymbol(m.currency)) try s.put(" ");
+                try s.expr(m.value);
+            },
+            .group => |inner| {
+                try s.put("(");
+                try s.expr(inner);
+                try s.put(")");
+            },
+            .neg => |inner| {
+                try s.put("−");
+                try s.expr(inner);
+            },
+            .binary => |b| {
+                try s.expr(b.left);
+                if (b.op == .pow) {
+                    try s.put("^");
+                } else try s.out.print(a, " {s} ", .{b.op.sign()});
+                try s.expr(b.right);
+            },
+            .joined => |j| {
+                try s.expr(j.left);
+                try s.put(" ");
+                try s.expr(j.right);
+            },
+            .percent => |inner| {
+                try s.expr(inner);
+                try s.percentSign();
+            },
+            .of => |o| {
+                try s.expr(o.left);
+                try s.put(if (s.locale.language == .de) " von " else " of ");
+                try s.expr(o.right);
+            },
+            .adjust => |adj| {
+                try s.expr(adj.base);
+                try s.out.print(a, " {s} ", .{adj.op.sign()});
+                try s.expr(adj.percent);
+                try s.percentSign();
+            },
+            .func => |f| {
+                if (f.func == .sqrt) {
+                    try s.put("√");
+                    try s.expr(f.arg);
+                    return;
+                }
+                try s.out.print(a, "{s}(", .{funcName(f.func)});
+                try s.expr(unwrapGroup(f.arg));
+                if (isTrig(f.func) and !hasAngle(f.arg)) try s.put("°");
+                try s.put(")");
+            },
+        }
+    }
+};
+
+/// Whether a currency is written as a sign (`€`, `$`) rather than a code
+/// (`CHF`): English puts a sign right before the amount, a code with a space.
+pub fn isSymbol(currency: []const u8) bool {
+    return currency.len > 0 and !std.ascii.isAlphabetic(currency[0]);
 }
 
 fn unwrapGroup(e: *const Expr) *const Expr {
@@ -483,12 +517,17 @@ pub fn quantityUnit(e: *const Expr) ?units.Id {
 const testing = std.testing;
 
 fn parsed(a: Allocator, s: []const u8) !ParseResult {
-    const tokens = (try lexer.tokenize(a, s)).?;
+    const tokens = (try lexer.tokenize(a, s, .de)).?;
     return parse(a, tokens);
 }
 
 fn shown(a: Allocator, s: []const u8, reading: Reading) ![]const u8 {
-    return (try parsed(a, s)).task.show(a, reading);
+    return (try parsed(a, s)).task.show(a, reading, .both(.de));
+}
+
+fn shownIn(a: Allocator, s: []const u8, reading: Reading, locale: Locale) ![]const u8 {
+    const tokens = (try lexer.tokenize(a, s, locale.numbers)).?;
+    return (try parse(a, tokens)).task.show(a, reading, locale);
 }
 
 test "shows the task in German" {
@@ -501,6 +540,21 @@ test "shows the task in German" {
     try testing.expectEqualStrings("√2 × 10", try shown(a, "wurzel 2 mal 10", .german));
     try testing.expectEqualStrings("sin(30°)", try shown(a, "sin 30", .german));
     try testing.expectEqualStrings("1,250 × 4", try shown(a, "1.250 x 4", .english));
+}
+
+test "shows the task in English" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const en: Locale = .both(.en);
+    try testing.expectEqualStrings("(1,299 + 89.90) × 3", try shownIn(a, "(1,299 + 89.90) * 3", .english, en));
+    try testing.expectEqualStrings("€1,299.00 + 19%", try shownIn(a, "1,299.00 € plus 19 %", .english, en));
+    try testing.expectEqualStrings("CHF 12 × 3", try shownIn(a, "12 CHF times 3", .english, en));
+    try testing.expectEqualStrings("19% of 80", try shownIn(a, "19 % of 80", .english, en));
+    try testing.expectEqualStrings("2 weeks in days", try shownIn(a, "2 Wochen in Tage", .english, en));
+    // English texts with German numbers, as on a Mac in English with a German region.
+    const mixed: Locale = .{ .language = .en, .numbers = .de };
+    try testing.expectEqualStrings("19 % of 1.299,00 €", try shownIn(a, "19 % von 1.299,00 €", .german, mixed));
 }
 
 test "names what an unfinished task needs" {

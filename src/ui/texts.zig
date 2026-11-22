@@ -141,8 +141,12 @@ pub const Texts = struct {
     quoted: []const u8,
     /// `{s}`: the skipped words.
     read_as_skipped: []const u8,
-    /// The caption of a task with a number that reads two ways.
-    ambiguous: []const u8,
+    /// How a number that reads two ways was read: a dot or a comma that
+    /// groups thousands or separates the fraction.
+    reading_dot_thousands: []const u8,
+    reading_dot_decimal: []const u8,
+    reading_comma_thousands: []const u8,
+    reading_comma_decimal: []const u8,
     task: []const u8,
     /// `{d}`: digits.
     rounded_significant: []const u8,
@@ -174,7 +178,7 @@ pub const Texts = struct {
     discount_only: []const u8,
     surcharge_included: []const u8,
     discount_included: []const u8,
-    /// `{s}`: the task in the other notation.
+    /// `{s}`: the task read the other way, `{s}`: how (`reading_…`).
     other_notation: []const u8,
     /// `{s}`: binary unit, `{s}`: its bytes.
     binary: []const u8,
@@ -329,7 +333,10 @@ pub const de: Texts = .{
     .list_and = " und ",
     .quoted = "„{s}“",
     .read_as_skipped = "gelesen als · {s} übergangen",
-    .ambiguous = "Punkt trennt Tausender, deutsch",
+    .reading_dot_thousands = "Punkt trennt Tausender, deutsch",
+    .reading_dot_decimal = "Punkt als Dezimalzeichen, englisch",
+    .reading_comma_thousands = "Komma trennt Tausender, englisch",
+    .reading_comma_decimal = "Komma als Dezimalzeichen, deutsch",
     .task = "Aufgabe",
     .rounded_significant = "auf {d} gültige Stellen gerundet",
     .rounded_cents = "auf Cent gerundet",
@@ -359,7 +366,7 @@ pub const de: Texts = .{
     .discount_only = "nur der Abzug",
     .surcharge_included = "wenn der Aufschlag schon drin ist",
     .discount_included = "wenn der Abzug schon abgezogen ist",
-    .other_notation = "gelesen als {s} · Punkt als Dezimalzeichen, englisch",
+    .other_notation = "gelesen als {s} · {s}",
     .binary = "binär · 1 {s} = {s} Byte",
     .word_of = "von",
 };
@@ -511,7 +518,10 @@ pub const en: Texts = .{
     .list_and = " and ",
     .quoted = "“{s}”",
     .read_as_skipped = "read as · {s} skipped",
-    .ambiguous = "read the English way",
+    .reading_dot_thousands = "dot separates thousands, German",
+    .reading_dot_decimal = "dot as decimal point, English",
+    .reading_comma_thousands = "comma separates thousands, English",
+    .reading_comma_decimal = "comma as decimal point, German",
     .task = "Task",
     .rounded_significant = "rounded to {d} significant digits",
     .rounded_cents = "rounded to cents",
@@ -541,7 +551,7 @@ pub const en: Texts = .{
     .discount_only = "the discount alone",
     .surcharge_included = "if the surcharge is already included",
     .discount_included = "if the discount is already taken off",
-    .other_notation = "read as {s} · the German way",
+    .other_notation = "read as {s} · {s}",
     .binary = "binary · 1 {s} = {s} bytes",
     .word_of = "of",
 };
@@ -593,6 +603,7 @@ test "both languages fill the same format strings" {
         _ = try std.mem.print(&buf, t.sheet_without, .{ "x", 1 });
         _ = try std.mem.print(&buf, t.sheet_stats, .{ "1", "2", "3" });
         _ = try std.mem.print(&buf, t.binary, .{ "MiB", "1" });
+        _ = try std.mem.print(&buf, t.other_notation, .{ "1,250 × 4", t.reading_dot_decimal });
         _ = try std.mem.print(&buf, t.rounded_significant, .{12});
     }
 }
