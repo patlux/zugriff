@@ -258,9 +258,14 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.zugriff.plist
 
 After an update, copy the new binary and restart the agent with
 `launchctl kickstart -k gui/$(id -u)/local.zugriff`. `make install` does both
-from a clean tree and signs the binary first; set `SIGN_IDENTITY`, `SIGN_ID`
-and `LAUNCH_AGENT` for your own setup, because the defaults are the
-maintainer's.
+from a clean tree and signs the binary first. Without settings it signs ad hoc
+and restarts `local.zugriff`; put your own `SIGN_IDENTITY`, `SIGN_ID`,
+`LAUNCH_AGENT` or `INSTALL_BIN` into `local.mk`, which Git ignores:
+
+```make
+SIGN_IDENTITY = Apple Development: Your Name (TEAMID1234)
+SIGN_ID = local.zugriff
+```
 
 ### Accessibility permission
 

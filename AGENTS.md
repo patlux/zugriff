@@ -1,9 +1,9 @@
 # AGENTS.md
 
-Zugriff in Zig: the macOS command palette of `zugriff-menu-rust` (Rust and
-GPUI), rebuilt in Zig 0.17.1 on nanoui (pinned in `build.zig.zon`). What it does, its commands
-and its layout are in `README.md`. The Rust version is archived; its `PRODUCT.md` owns the product intent; this
-port follows it and names its differences in `README.md`.
+Zugriff is a macOS command palette in Zig 0.17.1 on nanoui (pinned in `build.zig.zon`). What it
+does, its commands and its layout are in `README.md`; the product intent is in `PRODUCT.md`.
+Zugriff started as a Rust and GPUI app (`zugriff-menu-rust`, archived); `README.md` names where
+this version differs.
 
 ## Opening contract
 
@@ -25,12 +25,11 @@ The palette opens before any content work; this is not negotiable.
 
 ## Zig
 
-- Before writing or reviewing Zig code, load the skill `zig` (the shared agent skill for Zig 0.17).
 - Never write std, build or nanoui APIs from memory. Check them in the source: std through
   `zig env` (`.std_dir`), nanoui in `zig-pkg/nanoui-*/src`. Its tests (`src/ui/tests*.zig`,
   `src/ui/tester.zig`) are the best examples.
 - Which source wins: compiler and these rules, then the pinned nanoui source, then the std source,
-  then the skill.
+  then any Zig skill or notes of the agent.
 - The toolchain comes from `mise.toml` and `mise.lock`; run commands through mise (`mise x -- zig …`).
   `minimum_zig_version` is advisory only: Zig does not enforce it.
 - Do not use `nui start` or `zigdoc @init`; they generate a different project layout.
@@ -47,7 +46,16 @@ The palette opens before any content work; this is not negotiable.
   `main` and only when a release is asked for; commit that as `version bump to vX.Y.Z`.
 - No push, tag or hosted release without an explicit request.
 - `make install` builds a clean tree, signs it, copies it to `~/.local/share/zugriff/bin/zugriff`
-  and restarts the launch agent; run it only when an install is asked for.
+  and restarts the launch agent; run it only when an install is asked for. Its settings for one
+  machine (signing identity, launch agent) go into `local.mk`, which Git ignores.
+
+## Public repository
+
+This repository is public. Tracked files, commit messages and changesets name no personal setup:
+no machine or host names, home-directory paths, private hosts or URLs, accounts, signing
+identities or private issue-tracker links. Name neutral roles instead (a test Mac, the launch
+agent). Such details belong in `AGENTS.override.md` and `local.mk`; Git ignores both. An agent
+that reads `AGENTS.override.md` instead of this file needs these rules there as well.
 
 ## Checks
 
@@ -55,13 +63,13 @@ The palette opens before any content work; this is not negotiable.
   `zig fmt --check`, the tests in Debug and ReleaseSafe, and ziglint).
 - ziglint (`.ziglint.zon`, `mise run lint`) fails `check` on any finding. Fix the finding; do not
   weaken the task or `.ziglint.zon` to get past it.
-- The tests render the palette offscreen with `ui.Tester` and may run on this Mac. They open no
-  window, register no hot key, post no key events and touch neither the clipboard nor the icon
-  cache.
+- The tests render the palette offscreen with `ui.Tester` and may run on the developer's Mac. They
+  open no window, register no hot key, post no key events and touch neither the clipboard nor the
+  icon cache.
 - The real agent (`zig build run`, `zig-out/bin/zugriff`) takes the global hot keys, shows a
   panel over everything and can post `⌘V` to other apps. Run it only on a separate test Mac,
-  never on the developer's Mac, and with its own `HOME` so it
-  does not meet an installed agent's socket and preferences.
+  never on the developer's Mac, and with its own `HOME` so it does not meet an installed agent's
+  socket and preferences.
 - On the test Mac, drive it with `zugriff show|emoji|hide|quit` over SSH. The palette closes when
   it loses key status (by design). Accessibility value writes do not reach nanoui's text field.
 

@@ -5,3 +5,6 @@ zig-pkg/
 *.log
 *.figcraft-lock
 __pycache__/
+# Private to one machine: agent notes and install settings.
+/AGENTS.override.md
+/local.mk

@@ -2,6 +2,9 @@
 
 PYTHON ?= python3
 
+# Settings for one machine (SIGN_IDENTITY, SIGN_ID, LAUNCH_AGENT, INSTALL_BIN); Git ignores it.
+-include local.mk
+
 # The launch agent runs this copy, not zig-out/.
 INSTALL_BIN ?= $(HOME)/.local/share/zugriff/bin/zugriff
 LAUNCH_AGENT ?= local.zugriff
