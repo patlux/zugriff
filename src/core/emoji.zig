@@ -1,5 +1,6 @@
 //! Emoji for the picker: the compiled-in table, the search over German and
-//! English names, keywords and shortcodes, and the remembered preferences.
+//! English names, keywords and shortcodes (the palette's language ranks
+//! first), and the remembered preferences.
 //!
 //! The table comes from `scripts/emoji_data.py` and is static data in the
 //! binary: the texts once in `emoji_strings.txt`, the table only where they
@@ -7,6 +8,7 @@
 //! its emoji the moment the palette opens.
 const std = @import("std");
 const text = @import("text.zig");
+const Language = @import("language.zig").Language;
 const data = @import("emoji_data.zig");
 
 /// Recently used emoji the preferences keep; two rows of the grid.
@@ -92,8 +94,15 @@ pub const Emoji = struct {
     english: []const u8,
     /// gemoji shortcodes without colons, separated by `|`.
     codes: []const u8,
+    /// English CLDR name as written, for example `face with tears of joy`.
+    english_name: []const u8,
     /// The five skin-toned variants, light to dark.
     tones: ?[5][]const u8,
+
+    /// The name shown in `language`.
+    pub fn nameIn(e: Emoji, language: Language) []const u8 {
+        return if (language == .de) e.name else e.english_name;
+    }
 
     /// Shortcodes such as `joy` for `:joy:`.
     pub fn shortcodes(e: Emoji) std.mem.TokenIterator(u8, .scalar) {
@@ -117,11 +126,12 @@ pub const Emoji = struct {
 pub const Record = struct {
     start: u32,
     group: Group,
-    /// Byte lengths of glyph, name, folded, keywords, english and codes,
-    /// then of the five skin-toned glyphs (zero without skin tones).
+    /// Byte lengths of glyph, name, folded, keywords, english, codes and
+    /// english_name, then of the five skin-toned glyphs (zero without skin
+    /// tones).
     lens: [text_fields + 5]u16,
 
-    const text_fields = 6;
+    const text_fields = 7;
 };
 
 /// The number of emoji in the table.
@@ -151,6 +161,7 @@ pub fn get(i: usize) Emoji {
         .keywords = fields[3],
         .english = fields[4],
         .codes = fields[5],
+        .english_name = fields[6],
         .tones = if (used == Record.text_fields) null else fields[Record.text_fields..].*,
     };
 }
@@ -197,11 +208,12 @@ const word_separators = " -_:,";
 /// Searches the table; indices for `get`, best first. The caller frees.
 ///
 /// Every whitespace-separated token has to match a German name or keyword,
-/// a shortcode, or an English name or keyword. Colons around the query
+/// a shortcode, or an English name or keyword; names and keywords in
+/// `language` rank above those of the other one. Colons around the query
 /// (`:joy:`) are ignored. Ties go to the more recently used emoji (`recent`,
 /// glyphs most recent first), then to Unicode order. An empty query returns
 /// nothing: the grid shows the groups instead.
-pub fn search(gpa: std.mem.Allocator, query: []const u8, recent: []const []const u8) ![]usize {
+pub fn search(gpa: std.mem.Allocator, query: []const u8, recent: []const []const u8, language: Language) ![]usize {
     var tokens: std.ArrayList([]u8) = .empty;
     defer {
         for (tokens.items) |t| gpa.free(t);
@@ -225,7 +237,7 @@ pub fn search(gpa: std.mem.Allocator, query: []const u8, recent: []const []const
         const e = get(i);
         var total: u32 = 0;
         const matched = for (tokens.items) |t| {
-            total += score(e, t) orelse break false;
+            total += score(e, t, language) orelse break false;
         } else true;
         if (matched) try hits.append(gpa, .{ .index = i, .score = total, .recency = recency(e, recent) });
     }
@@ -251,39 +263,22 @@ fn recency(e: Emoji, recent: []const []const u8) usize {
     return std.math.maxInt(usize);
 }
 
-fn score(e: Emoji, token: []const u8) ?u32 {
+fn score(e: Emoji, token: []const u8, language: Language) ?u32 {
     var best: ?u32 = null;
-    const offer = struct {
-        fn f(b: *?u32, s: u32) void {
-            b.* = if (b.*) |x| @max(x, s) else s;
-        }
-    }.f;
-
-    var name_words = std.mem.splitAny(u8, e.folded, word_separators);
-    const first = name_words.first();
-    if (std.mem.eql(u8, e.folded, token)) {
-        offer(&best, name_exact);
-    } else if (std.mem.eql(u8, first, token)) {
-        offer(&best, name_first_word);
-    } else if (anyWord(e.folded, token, .exact)) {
-        offer(&best, name_word_exact);
-    } else if (std.mem.startsWith(u8, e.folded, token)) {
-        offer(&best, name_prefix);
-    } else if (anyWord(e.folded, token, .prefix)) {
-        offer(&best, name_word);
-    } else if (text.countCodepoints(token) >= infix_min_chars and std.mem.find(u8, e.folded, token) != null) {
-        offer(&best, name_infix);
-    }
-
-    var keywords = std.mem.tokenizeScalar(u8, e.keywords, '|');
-    while (keywords.next()) |k| {
-        if (std.mem.eql(u8, k, token)) {
-            offer(&best, keyword_exact);
-        } else if (std.mem.startsWith(u8, k, token)) {
-            offer(&best, keyword_prefix);
-        } else if (wordStartsWith(k, token)) {
-            offer(&best, keyword_word);
-        }
+    var english = std.mem.tokenizeScalar(u8, e.english, '|');
+    const english_name = english.next() orelse "";
+    switch (language) {
+        .de => {
+            nameScore(&best, e.folded, token);
+            listScore(&best, e.keywords, token, .{ keyword_exact, keyword_prefix, keyword_word });
+            listScore(&best, e.english, token, .{ english_exact, english_prefix, english_word });
+        },
+        .en => {
+            nameScore(&best, english_name, token);
+            listScore(&best, english.rest(), token, .{ keyword_exact, keyword_prefix, keyword_word });
+            listScore(&best, e.folded, token, .{ english_exact, english_prefix, english_word });
+            listScore(&best, e.keywords, token, .{ english_exact, english_prefix, english_word });
+        },
     }
 
     var codes = e.shortcodes();
@@ -294,18 +289,46 @@ fn score(e: Emoji, token: []const u8) ?u32 {
             offer(&best, code_prefix);
         }
     }
+    return best;
+}
 
-    var english = std.mem.tokenizeScalar(u8, e.english, '|');
-    while (english.next()) |en| {
-        if (std.mem.eql(u8, en, token)) {
-            offer(&best, english_exact);
-        } else if (std.mem.startsWith(u8, en, token)) {
-            offer(&best, english_prefix);
-        } else if (wordStartsWith(en, token)) {
-            offer(&best, english_word);
+fn offer(best: *?u32, s: u32) void {
+    best.* = if (best.*) |x| @max(x, s) else s;
+}
+
+/// The name in the palette's language, folded: whole name, first word,
+/// another word, a prefix, a word start, then inside a word.
+fn nameScore(best: *?u32, folded: []const u8, token: []const u8) void {
+    var name_words = std.mem.splitAny(u8, folded, word_separators);
+    const first = name_words.first();
+    if (std.mem.eql(u8, folded, token)) {
+        offer(best, name_exact);
+    } else if (std.mem.eql(u8, first, token)) {
+        offer(best, name_first_word);
+    } else if (anyWord(folded, token, .exact)) {
+        offer(best, name_word_exact);
+    } else if (std.mem.startsWith(u8, folded, token)) {
+        offer(best, name_prefix);
+    } else if (anyWord(folded, token, .prefix)) {
+        offer(best, name_word);
+    } else if (text.countCodepoints(token) >= infix_min_chars and std.mem.find(u8, folded, token) != null) {
+        offer(best, name_infix);
+    }
+}
+
+/// Entries separated by `|`, scored as an exact match, a prefix or a word
+/// start with `scores`.
+fn listScore(best: *?u32, list: []const u8, token: []const u8, scores: [3]u32) void {
+    var entries = std.mem.tokenizeScalar(u8, list, '|');
+    while (entries.next()) |entry| {
+        if (std.mem.eql(u8, entry, token)) {
+            offer(best, scores[0]);
+        } else if (std.mem.startsWith(u8, entry, token)) {
+            offer(best, scores[1]);
+        } else if (wordStartsWith(entry, token)) {
+            offer(best, scores[2]);
         }
     }
-    return best;
 }
 
 /// Whether a word of `s` (any, the first included) is or starts with `token`.
@@ -403,7 +426,7 @@ fn staticGlyph(glyph: []const u8) ?[]const u8 {
 const testing = std.testing;
 
 fn glyphs(query: []const u8) ![]const []const u8 {
-    const hits = try search(testing.allocator, query, &.{});
+    const hits = try search(testing.allocator, query, &.{}, .de);
     defer testing.allocator.free(hits);
     const out = try testing.allocator.alloc([]const u8, hits.len);
     for (hits, out) |h, *o| o.* = get(h).glyph;
@@ -474,6 +497,20 @@ test "shortcodes and English names work too" {
     try testing.expect(position(d, "🎉") != null);
 }
 
+test "English names rank first in English and German ones still find" {
+    const hits = try search(testing.allocator, "heart", &.{}, .en);
+    defer testing.allocator.free(hits);
+    try testing.expectEqualStrings("❤️", get(hits[0]).glyph);
+    const german = try search(testing.allocator, "herz", &.{}, .en);
+    defer testing.allocator.free(german);
+    try testing.expect(german.len > 0);
+    const joy = get((find("😂") orelse return error.NoEmoji).index);
+    try testing.expectEqualStrings("face with tears of joy", joy.nameIn(.en));
+    try testing.expectEqualStrings("Gesicht mit Freudentränen", joy.nameIn(.de));
+    const flag = get((find("🇩🇪") orelse return error.NoEmoji).index);
+    try testing.expectEqualStrings("flag: Germany", flag.nameIn(.en));
+}
+
 test "names beat keywords and whole words beat word starts" {
     const hearts = try glyphs("herz");
     defer testing.allocator.free(hearts);
@@ -504,7 +541,7 @@ test "recently used emoji win ties" {
     defer testing.allocator.free(plain);
     try testing.expectEqualStrings("👍", plain[0]);
     try testing.expectEqualStrings("👎", plain[1]);
-    const recent = try search(testing.allocator, "daumen", &.{"👎🏽"});
+    const recent = try search(testing.allocator, "daumen", &.{"👎🏽"}, .de);
     defer testing.allocator.free(recent);
     try testing.expectEqualStrings("👎", get(recent[0]).glyph);
 }
@@ -553,13 +590,13 @@ test "every record lines up with its line of the strings" {
         try testing.expectEqual(line_start, r.start);
         const e = get(i);
         try testing.expect(e.glyph.len > 0 and e.name.len > 0 and e.folded.len > 0);
-        const last = if (e.tones) |t| t[4] else e.codes;
+        const last = if (e.tones) |t| t[4] else e.english_name;
         const end = @intFromPtr(last.ptr) - @intFromPtr(data.strings.ptr) + last.len;
         try testing.expectEqual(@as(u8, '\n'), data.strings[end]);
         const line = data.strings[r.start..end];
         try testing.expect(std.mem.findScalar(u8, line, '\n') == null);
         const tabs = std.mem.countScalar(u8, line, '\t');
-        try testing.expectEqual(@as(usize, if (e.tones == null) 5 else 10), tabs);
+        try testing.expectEqual(@as(usize, if (e.tones == null) 6 else 11), tabs);
         if (e.tones) |t| for (t) |tone| try testing.expect(tone.len > 0);
         line_start = end + 1;
     }

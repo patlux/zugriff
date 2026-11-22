@@ -4,9 +4,10 @@
 //! It opens with its own hot key or with `:` typed into the app search.
 //! Without a query the grid shows the recently used emoji and then every
 //! group; typing filters by German and English names, keywords and
-//! shortcodes. `↵` inserts into the app in front, `⌘↵` copies, `⇥` opens
-//! the skin tones. With the mouse a click inserts, a right-click or a long
-//! press opens the skin tones. The table is static data; entering the
+//! shortcodes, those in the palette's language first, and the footer names
+//! the emoji in that language. `↵` inserts into the app in front, `⌘↵`
+//! copies, `⇥` opens the skin tones. With the mouse a click inserts, a
+//! right-click or a long press opens the skin tones. The table is static data; entering the
 //! picker builds the grid from it and never waits for anything.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -181,7 +182,7 @@ pub const Picker = struct {
         if (search.len == 0) {
             try k.buildBrowse(gpa, lang);
         } else {
-            const hits = try emoji.search(gpa, search, k.prefs.recentSlice());
+            const hits = try emoji.search(gpa, search, k.prefs.recentSlice(), lang);
             defer gpa.free(hits);
             if (hits.len > 0) {
                 k.title.clearRetainingCapacity();
@@ -617,7 +618,7 @@ fn selectedLabel(p: *Palette, c: *ui.Context) void {
     const row = ui.div(c).row().gap(6).itemsCenter().minW(0).grow().clip();
     defer row.end();
     p.glyphs.draw(c, glyph, 16);
-    ui.text(c, entry.name, .{ .size = 11, .color = theme.text });
+    ui.text(c, entry.nameIn(p.lang), .{ .size = 11, .color = theme.text });
     ui.text(c, codes.items, .{ .size = 11, .color = theme.placeholder, .truncate = .ellipsis });
 }
 

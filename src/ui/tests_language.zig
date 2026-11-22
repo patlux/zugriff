@@ -203,3 +203,27 @@ test "English texts with German numbers, as on a Mac in English with a German re
     try testing.expect(h.t.hasText("dot separates thousands, German"));
     try testing.expect(h.t.hasText("read as 1,250 × 4 · dot as decimal point, English"));
 }
+
+test "the emoji picker names groups and emoji in English" {
+    var h: Harness = undefined;
+    try h.initIn(&.{}, .en);
+    defer h.deinit();
+    try h.palette.showEmoji();
+    h.t.frame();
+    try testing.expect(h.t.hasText("Smileys & Emotion"));
+    try testing.expect(h.t.hasText("grinning face"));
+    try testing.expect(h.t.hasText("↵ Insert"));
+    try expectNoGerman(&h);
+
+    h.typeText("heart");
+    h.t.frame();
+    try testing.expect(h.t.hasText("Results for “heart”"));
+    try testing.expectEqualStrings("❤️", h.palette.emoji.cells.items[0].glyph);
+    try testing.expect(h.t.hasText("red heart"));
+
+    h.clear();
+    h.typeText("qqqq");
+    h.t.frame();
+    try testing.expect(h.t.hasText("No emoji for “qqqq”"));
+    try expectNoGerman(&h);
+}

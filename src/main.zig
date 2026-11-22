@@ -194,11 +194,11 @@ fn listApps(
 fn listEmoji(a: std.mem.Allocator, out: *std.Io.Writer, lang: Language, query: []const u8) !void {
     const count = core.emoji.table_len;
     if (core.text.trim(query).len == 0) return messages.print(out, lang, "emoji_total", .{count});
-    const hits = try core.emoji.search(a, query, &.{});
+    const hits = try core.emoji.search(a, query, &.{}, lang);
     try messages.print(out, lang, "emoji_found", .{ count, hits.len });
     for (hits[0..@min(hits.len, 30)]) |i| {
         const e = core.emoji.get(i);
-        try out.print("{s}  {s:<44} ", .{ e.glyph, e.name });
+        try out.print("{s}  {s:<44} ", .{ e.glyph, e.nameIn(lang) });
         var codes = e.shortcodes();
         while (codes.next()) |code| try out.print(":{s}: ", .{code});
         try out.writeAll("\n");

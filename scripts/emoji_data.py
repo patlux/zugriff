@@ -8,7 +8,7 @@ Sources (downloaded into --sources, or read from there if present):
 
 - Unicode emoji-test.txt 16.0: the emoji, their order, groups and skin tones
 - Unicode CLDR 47 annotations and derived annotations, German and English:
-  names and search keywords
+  names (shown in the palette's language) and search keywords
 - GitHub gemoji 4.1.0: shortcodes such as :joy:
 
 Usage:
@@ -112,12 +112,12 @@ def parse_test(sources: pathlib.Path) -> list[tuple[str, str, str]]:
     return rows
 
 
-# One line per emoji in STRINGS: glyph, name, folded, keywords, english, codes
-# and, for emoji with skin tones, the five toned glyphs, each followed by a tab
+# One line per emoji in STRINGS: glyph, name, folded, keywords, english, codes,
+# the English name as CLDR writes it and, for emoji with skin tones, the five toned glyphs, each followed by a tab
 # and the last one by the newline. The Zig table holds only where a line starts
 # and how long its fields are, so the binary keeps every text once and no
 # slice headers.
-FIELDS = ("glyph", "name", "folded", "keywords", "english", "codes")
+FIELDS = ("glyph", "name", "folded", "keywords", "english", "codes", "english_name")
 TONE_COUNT = 5
 MAX_FIELD_BYTES = 0xFFFF  # the table stores lengths as u16
 
@@ -169,6 +169,8 @@ def from_rust(path: pathlib.Path) -> list[dict]:
         entry = {}
         for name in ("glyph", "name", "folded", "keywords", "english", "codes"):
             entry[name] = json.loads(re.search(name + r": (" + string + ")", block).group(1))
+        # The Rust table keeps the English name folded only.
+        entry["english_name"] = entry["english"].split("|", 1)[0]
         entry["group"] = re.search(r"group: Group::(\w+)", block).group(1)
         tones = re.search(r"tones: (None|Some\(\[(.*?)\]\))", block, re.S)
         entry["tones"] = None if tones.group(1) == "None" else [json.loads(t) for t in re.findall(string, tones.group(2))]
@@ -240,6 +242,7 @@ def main() -> None:
                 "keywords": "|".join(fold(word) for word in de_keywords),
                 "english": "|".join(fold(word) for word in [en_name, *en_keywords]),
                 "codes": "|".join(gemoji.get(key(glyph), [])),
+                "english_name": en_name,
                 "tones": tones if all(tones) else None,
             }
         )
