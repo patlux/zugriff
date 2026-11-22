@@ -14,6 +14,7 @@ const theme = @import("theme.zig");
 const calc_view = @import("calc_view.zig");
 const emoji_view = @import("emoji_view.zig");
 const help_view = @import("help_view.zig");
+const texts = @import("texts.zig");
 const Glyphs = @import("glyphs.zig").Glyphs;
 
 /// The picture atlas starts at 512² (1 MB) instead of nanoui's 2048²
@@ -46,7 +47,6 @@ const Key = @typeInfo(@FieldType(@FieldType(ui.Context, "input"), "key")).option
 pub const Pressed = enum { enter, escape, tab, up, down };
 pub const Mods = struct { cmd: bool = false, ctrl: bool = false, alt: bool = false, shift: bool = false };
 
-pub const search_placeholder = "Apps suchen …";
 const search_icon = @embedFile("assets/search.svg");
 /// The glyph on the tile of the "Emoji" row.
 const emoji_command_glyph = "😀";
@@ -90,11 +90,15 @@ pub const Palette = struct {
     gpa: Allocator,
     io: std.Io,
     home: ?[]const u8,
+    /// The language of every text and of the emoji names.
+    lang: core.Language,
+    /// How the calculator reads and writes numbers.
+    numbers: core.Language,
     host: Host,
     query: ui.TextBuffer = .{},
     /// The text the rows were computed for.
     seen: std.ArrayList(u8) = .empty,
-    placeholder: []const u8 = search_placeholder,
+    placeholder: []const u8,
     /// Lines pasted as one block; the field then only previews them.
     block: ?[][]u8 = null,
     /// Whether a paste with several lines becomes a block (the calculator
@@ -117,14 +121,17 @@ pub const Palette = struct {
     /// For the strings of one frame's direct target detection.
     scratch: std.heap.ArenaAllocator,
 
-    pub fn init(gpa: Allocator, io: std.Io, home: ?[]const u8, host: Host) Palette {
+    pub fn init(gpa: Allocator, io: std.Io, home: ?[]const u8, locale: core.Locale, host: Host) Palette {
         var p: Palette = .{
             .gpa = gpa,
             .io = io,
             .home = home,
+            .lang = locale.language,
+            .numbers = locale.numbers,
             .host = host,
+            .placeholder = texts.of(locale.language).search_placeholder,
             .catalog = .empty(gpa),
-            .calc = .init(gpa),
+            .calc = .init(gpa, locale.numbers),
             .glyphs = .init(gpa),
             .scratch = .init(gpa),
         };
@@ -171,7 +178,7 @@ pub const Palette = struct {
     /// rows only when apps came, went or changed, and then keep the query,
     /// the calculator and the selected app. Returns whether anything changed.
     pub fn setCatalog(p: *Palette, apps: []const Item) !bool {
-        var next = try withCommands(p.gpa, apps);
+        var next = try withCommands(p.gpa, apps, p.lang);
         errdefer next.deinit();
         if (p.loading) {
             p.loading = false;
@@ -396,7 +403,11 @@ pub const Palette = struct {
                 .subtitle = path,
                 .action = .{ .open_path = path },
             },
-            .url => |url| .{ .title = url, .subtitle = "Im Browser öffnen", .action = .{ .open_url = url } },
+            .url => |url| .{
+                .title = url,
+                .subtitle = texts.of(p.lang).open_in_browser,
+                .action = .{ .open_url = url },
+            },
         };
         p.clearDirect();
         p.direct = try Catalog.init(p.gpa, &.{it});
@@ -738,7 +749,7 @@ pub const Palette = struct {
     }
 
     fn headerLabel(p: *Palette, c: *ui.Context) ?[]const u8 {
-        if (p.emoji.active()) return "Emoji";
+        if (p.emoji.active()) return texts.of(p.lang).emoji_row_title;
         return calc_view.headerLabel(p, c);
     }
 
@@ -797,15 +808,16 @@ pub const Palette = struct {
     fn emptyState(p: *Palette, c: *ui.Context) void {
         const box = ui.div(c).column().sizeFull().center().gap(4);
         defer box.end();
+        const t = texts.of(p.lang);
         if (p.loading) {
-            ui.text(c, "Apps werden geladen …", .{ .size = 14, .color = theme.text });
-            ui.text(c, "Die installierten Programme erscheinen gleich.", .{ .size = 12, .color = theme.muted });
+            ui.text(c, t.loading_title, .{ .size = 14, .color = theme.text });
+            ui.text(c, t.loading_detail, .{ .size = 12, .color = theme.muted });
         } else if (core.text.trim(p.text()).len == 0) {
-            ui.text(c, "Keine Apps gefunden", .{ .size = 14, .color = theme.text });
-            ui.text(c, "Die App-Liste ist leer.", .{ .size = 12, .color = theme.muted });
+            ui.text(c, t.no_apps_title, .{ .size = 14, .color = theme.text });
+            ui.text(c, t.no_apps_detail, .{ .size = 12, .color = theme.muted });
         } else {
-            ui.text(c, "Keine Treffer", .{ .size = 14, .color = theme.text });
-            ui.text(c, c.print("Nichts gefunden für „{s}“", .{p.text()}), .{ .size = 12, .color = theme.muted });
+            ui.text(c, t.no_hits_title, .{ .size = 14, .color = theme.text });
+            ui.text(c, texts.print(c, p.lang, "no_hits_detail", .{p.text()}), .{ .size = 12, .color = theme.muted });
         }
     }
 
@@ -819,7 +831,7 @@ pub const Palette = struct {
         if (p.emoji.active()) {
             hints = emoji_view.footer(p, c, &hints_buf);
         } else if (p.help.showing) {
-            hints = help_view.footer(p, c);
+            hints = help_view.footer(p, c, &hints_buf);
         } else if (calc_view.footer(p, c, &hints_buf)) |h| {
             hints = h;
         } else if (help_view.tip(p)) |tip| {
@@ -837,43 +849,46 @@ pub const Palette = struct {
     }
 
     fn countLabel(p: *Palette, c: *ui.Context) []const u8 {
-        if (p.direct != null) return c.print("{d} Treffer", .{p.results.len});
-        if (p.loading) return "Apps werden geladen …";
-        if (core.text.trim(p.text()).len == 0) return c.print("{d} Apps", .{p.results.len});
-        return c.print("{d} Treffer", .{p.results.len});
+        const n = p.results.len;
+        if (p.direct != null) return texts.count(c, p.lang, n, "hits_one", "hits");
+        if (p.loading) return texts.of(p.lang).loading_title;
+        if (core.text.trim(p.text()).len == 0) return texts.count(c, p.lang, n, "apps_one", "apps");
+        return texts.count(c, p.lang, n, "hits_one", "hits");
     }
 
     fn searchHints(p: *Palette, buf: *[6][]const u8) []const []const u8 {
+        const t = texts.of(p.lang);
         var n: usize = 0;
-        buf[n] = "↑↓ Navigieren";
+        buf[n] = t.hint_navigate;
         n += 1;
         const on_help = if (p.selectedItem()) |it| it.action == .open_help else false;
-        buf[n] = if (on_help) "↵ Hilfe öffnen" else "↵ Öffnen";
+        buf[n] = if (on_help) t.hint_open_help else t.hint_open;
         n += 1;
         // A direct row replaces the app list, so the footer may only
         // advertise what the selection can actually do.
         if (p.direct != null) if (p.selectedItem()) |it| if (it.action.path() != null) {
-            buf[n] = "⌘↵ Finder";
+            buf[n] = t.hint_finder;
             n += 1;
         };
-        buf[n] = "esc Schließen";
+        buf[n] = t.hint_close;
         n += 1;
         return buf[0..n];
     }
 };
 
 /// The app list plus the palette's own commands, found by typing their name.
-fn withCommands(gpa: Allocator, apps: []const Item) !Catalog {
+fn withCommands(gpa: Allocator, apps: []const Item, lang: core.Language) !Catalog {
     var items: std.ArrayList(Item) = .empty;
     defer items.deinit(gpa);
     for (apps) |it| if (!it.action.isCommand()) try items.append(gpa, it);
+    const t = texts.of(lang);
     try items.append(gpa, .{
-        .title = "Emoji",
-        .subtitle = "Emoji suchen und einfügen · ⌃⌘Leertaste",
-        .keywords = &.{ "emoji", "emojis", "smiley", "smileys", "emoticon", "symbole" },
+        .title = t.emoji_row_title,
+        .subtitle = t.emoji_row_subtitle,
+        .keywords = &.{ "emoji", "emojis", "smiley", "smileys", "emoticon", "symbole", "symbols" },
         .action = .open_emoji_picker,
     });
-    try items.append(gpa, help_view.command);
+    try items.append(gpa, help_view.command(lang));
     return Catalog.init(gpa, items.items);
 }
 

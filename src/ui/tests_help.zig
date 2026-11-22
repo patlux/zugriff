@@ -10,7 +10,7 @@ const Harness = tests_palette.Harness;
 const Apps = tests_palette.Apps;
 
 fn selectTopic(h: *Harness, title: []const u8) !void {
-    for (help_view.topics, 0..) |t, i| if (std.mem.eql(u8, t.title, title)) {
+    for (help_view.topics(.de, .de), 0..) |t, i| if (std.mem.eql(u8, t.title, title)) {
         for (0..i) |_| h.down();
         return;
     };
@@ -26,7 +26,7 @@ test "a question mark lists the topics with their examples" {
     h.typeText("?");
     try testing.expect(h.palette.help.showing);
     try testing.expectEqual(@as(usize, 0), h.palette.resultCount());
-    for (help_view.topics) |t| {
+    for (help_view.topics(.de, .de)) |t| {
         try testing.expect(h.t.hasText(t.title));
         try testing.expect(h.t.hasText(t.example));
     }
@@ -201,7 +201,7 @@ test "the footer keeps its place with and without the tip" {
     try h.init(apps.items);
     defer h.deinit();
     h.t.frame();
-    const count = h.t.findText("1 Apps") orelse return error.NoCount;
+    const count = h.t.findText("1 App") orelse return error.NoCount;
     h.palette.setHelpSeen(false);
     h.t.frame();
     const tip = h.t.findText("Tipp: ? zeigt, was Zugriff kann") orelse return error.NoTip;

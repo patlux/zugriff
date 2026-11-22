@@ -15,13 +15,14 @@ const ui = nanoui.ui;
 const core = @import("../core.zig");
 const emoji = core.emoji;
 const theme = @import("theme.zig");
+const texts = @import("texts.zig");
 const palette = @import("palette.zig");
 const Palette = palette.Palette;
 const log = std.log.scoped(.emoji_view);
 const Tone = emoji.Tone;
 const Group = emoji.Group;
+const Language = core.Language;
 
-pub const placeholder = "Emoji suchen …";
 pub const columns = 12;
 pub const cell_size: f32 = 48;
 const cell_gap: f32 = 3;
@@ -85,13 +86,17 @@ const Section = union(enum) {
         };
     }
 
-    fn title(s: Section) []const u8 {
+    fn title(s: Section, lang: Language) []const u8 {
         return switch (s) {
-            .recent => "Zuletzt verwendet",
-            .group => |g| g.title(),
+            .recent => texts.of(lang).emoji_recent,
+            .group => |g| groupTitle(g, lang),
         };
     }
 };
+
+fn groupTitle(g: Group, lang: Language) []const u8 {
+    return texts.of(lang).emoji_groups[@backingInt(g)];
+}
 
 const PromptRow = enum { open_settings, copy_only };
 
@@ -160,7 +165,7 @@ pub const Picker = struct {
     }
 
     /// Rebuilds cells and lines for `query`; the first cell is selected.
-    fn rebuild(k: *Picker, gpa: Allocator, query: []const u8) !void {
+    fn rebuild(k: *Picker, gpa: Allocator, query: []const u8, lang: Language) !void {
         k.query.clearRetainingCapacity();
         try k.query.appendSlice(gpa, query);
         k.cells.clearRetainingCapacity();
@@ -174,15 +179,15 @@ pub const Picker = struct {
 
         const search = searchOf(k.query.items);
         if (search.len == 0) {
-            try k.buildBrowse(gpa);
+            try k.buildBrowse(gpa, lang);
         } else {
             const hits = try emoji.search(gpa, search, k.prefs.recentSlice());
             defer gpa.free(hits);
             if (hits.len > 0) {
                 k.title.clearRetainingCapacity();
-                try k.title.print(gpa, "Treffer für „{s}“", .{search});
+                try texts.append(&k.title, "emoji_results", gpa, lang, .{search});
                 k.detail.clearRetainingCapacity();
-                try k.detail.print(gpa, "{d} Emoji", .{hits.len});
+                try texts.append(&k.detail, "emoji_count", gpa, lang, .{hits.len});
                 try k.lines.append(gpa, .{ .section = .{ .title = k.title.items, .detail = k.detail.items } });
                 const start = k.cells.items.len;
                 for (hits) |i| try k.cells.append(gpa, .{ .emoji = i, .glyph = emoji.get(i).withTone(k.prefs.tone) });
@@ -193,10 +198,10 @@ pub const Picker = struct {
     }
 
     /// Without a query: the recent emoji, then every group.
-    fn buildBrowse(k: *Picker, gpa: Allocator) !void {
+    fn buildBrowse(k: *Picker, gpa: Allocator, lang: Language) !void {
         if (k.prefs.recent_len > 0) {
             try k.sections.append(gpa, .{ .section = .recent, .start = 0 });
-            try k.lines.append(gpa, .{ .section = .{ .title = Section.title(.recent), .detail = "⌘1–9" } });
+            try k.lines.append(gpa, .{ .section = .{ .title = Section.title(.recent, lang), .detail = "⌘1–9" } });
             for (k.prefs.recentSlice()) |glyph| {
                 const f = emoji.find(glyph) orelse continue;
                 try k.cells.append(gpa, .{ .emoji = f.index, .glyph = emoji.get(f.index).withTone(f.tone) });
@@ -206,7 +211,7 @@ pub const Picker = struct {
         for (Group.all) |group| {
             const start = k.cells.items.len;
             try k.sections.append(gpa, .{ .section = .{ .group = group }, .start = start });
-            try k.lines.append(gpa, .{ .section = .{ .title = group.title(), .detail = null } });
+            try k.lines.append(gpa, .{ .section = .{ .title = groupTitle(group, lang), .detail = null } });
             for (0..emoji.table_len) |i| if (emoji.groupOf(i) == group) {
                 try k.cells.append(gpa, .{ .emoji = i, .glyph = emoji.get(i).withTone(k.prefs.tone) });
             };
@@ -336,14 +341,14 @@ pub fn showFromHotkey(p: *Palette) !void {
     p.query.clear();
     p.query.focus();
     enter(p, .hotkey);
-    try p.emoji.rebuild(p.gpa, "");
+    try p.emoji.rebuild(p.gpa, "", p.lang);
     p.seen.clearRetainingCapacity();
 }
 
 /// The remembered skin tone and recent emoji, read in the background.
 pub fn setPrefs(p: *Palette, prefs: emoji.Prefs) !void {
     p.emoji.prefs = prefs;
-    if (p.emoji.active() and searchOf(p.emoji.query.items).len == 0) try p.emoji.rebuild(p.gpa, "");
+    if (p.emoji.active() and searchOf(p.emoji.query.items).len == 0) try p.emoji.rebuild(p.gpa, "", p.lang);
 }
 
 /// Whether `↵` can insert into the app in front, checked after a show.
@@ -356,7 +361,7 @@ fn enter(p: *Palette, entry: Entry) void {
     if (p.direct) |*d| d.deinit();
     p.direct = null;
     p.setResults(&.{});
-    p.placeholder = placeholder;
+    p.placeholder = texts.of(p.lang).emoji_placeholder;
     p.accepts_blocks = false;
 }
 
@@ -366,7 +371,7 @@ pub fn leave(p: *Palette) void {
     p.emoji.prompt = null;
     p.emoji.tones = null;
     p.emoji.hold = null;
-    p.placeholder = palette.search_placeholder;
+    p.placeholder = texts.of(p.lang).search_placeholder;
     p.accepts_blocks = true;
 }
 
@@ -378,13 +383,13 @@ pub fn refresh(p: *Palette, raw: []const u8) !bool {
         enter(p, .from_search);
         const rest = try p.gpa.dupe(u8, raw[1..]);
         defer p.gpa.free(rest);
-        try p.emoji.rebuild(p.gpa, rest);
+        try p.emoji.rebuild(p.gpa, rest, p.lang);
         p.query.set(rest);
         p.seen.clearRetainingCapacity();
         try p.seen.appendSlice(p.gpa, rest);
         return true;
     }
-    try p.emoji.rebuild(p.gpa, raw);
+    try p.emoji.rebuild(p.gpa, raw, p.lang);
     return true;
 }
 
@@ -393,7 +398,7 @@ pub fn refresh(p: *Palette, raw: []const u8) !bool {
 pub fn openFromSearch(p: *Palette) !void {
     p.calc.clearView();
     enter(p, .from_search);
-    try p.emoji.rebuild(p.gpa, "");
+    try p.emoji.rebuild(p.gpa, "", p.lang);
     p.query.clear();
     p.seen.clearRetainingCapacity();
 }
@@ -556,33 +561,40 @@ fn answerPrompt(p: *Palette, prompt: Prompt, row: PromptRow) void {
 /// The footer: the selected emoji with name and shortcode, and the keys.
 pub fn footer(p: *Palette, c: *ui.Context, buf: *[6][]const u8) []const []const u8 {
     const k = &p.emoji;
+    const t = texts.of(p.lang);
     if (k.prompt != null) {
-        footerText(c, "Einfügen braucht eine Erlaubnis", theme.muted);
-        return &.{ "↑↓ Auswahl", "↵ Bestätigen", "⌘↵ Kopieren", "esc Zurück" };
+        footerText(c, t.emoji_permission_needed, theme.muted);
+        return hints(buf, &.{ t.hint_select, t.hint_confirm, t.hint_copy_cmd, t.hint_back });
     }
     if (k.tones != null) {
         selectedLabel(p, c);
-        return &.{ "←→ Hautton", "↵ Einfügen und merken", "⇥ Zurück" };
+        return hints(buf, &.{ t.hint_tone, t.hint_insert_remember, t.hint_tab_back });
     }
     const cell = k.selectedCell() orelse {
-        footerText(c, "0 Emoji", theme.muted);
-        return &.{"esc Schließen"};
+        footerText(c, t.emoji_none, theme.muted);
+        return hints(buf, &.{t.hint_close});
     };
     if (k.support == .secure_input) {
-        footerText(c, "Eingabeschutz aktiv (Passwortfeld vorn): ↵ kopiert nur", theme.accent);
-        return &.{ "↵ Kopieren", "esc Schließen" };
+        footerText(c, t.secure_input, theme.accent);
+        return hints(buf, &.{ t.hint_copy, t.hint_close });
     }
     var n: usize = 0;
     if (emoji.get(cell.emoji).hasTones()) {
-        buf[n] = "⇥ Hauttöne";
+        buf[n] = t.hint_tones;
         n += 1;
     }
-    for ([_][]const u8{ "↵ Einfügen", "⌘↵ Kopieren", "esc Schließen" }) |h| {
+    for ([_][]const u8{ t.hint_insert, t.hint_copy_cmd, t.hint_close }) |h| {
         buf[n] = h;
         n += 1;
     }
     selectedLabel(p, c);
     return buf[0..n];
+}
+
+/// `list` copied into `buf`: the footer's hints outlive this call.
+fn hints(buf: *[6][]const u8, list: []const []const u8) []const []const u8 {
+    @memcpy(buf[0..list.len], list);
+    return buf[0..list.len];
 }
 
 fn footerText(c: *ui.Context, s: []const u8, color: ui.Color) void {
@@ -618,10 +630,10 @@ pub fn body(p: *Palette, c: *ui.Context) !void {
         defer box.end();
         ui.text(
             c,
-            c.print("Kein Emoji für „{s}“", .{searchOf(k.query.items)}),
+            texts.print(c, p.lang, "emoji_empty", .{searchOf(k.query.items)}),
             .{ .size = 15, .color = theme.text },
         );
-        ui.text(c, "⌫ ändert die Suche, esc schließt.", .{ .size = 12, .color = theme.muted });
+        ui.text(c, texts.of(p.lang).emoji_empty_detail, .{ .size = 12, .color = theme.muted });
         return;
     }
     if (k.sections.items.len > 0) categoryBar(p, c);
@@ -644,7 +656,7 @@ fn categoryBar(p: *Palette, c: *ui.Context) void {
         ui.spacer(c);
         ui.text(
             c,
-            if (current) |i| k.sections.items[i].section.title() else "",
+            if (current) |i| k.sections.items[i].section.title(p.lang) else "",
             .{ .size = 11, .color = theme.placeholder },
         );
         ui.text(c, "⌥←→", .{ .size = 11, .color = theme.muted });
@@ -792,38 +804,35 @@ fn tonesView(p: *Palette, c: *ui.Context) void {
         p.glyphs.draw(c, entry.withTone(tone), glyph_size + 4);
     }
     ui.spacer(c);
-    ui.text(c, "←→ wählen · ↵ einfügen und merken", .{ .size = 11, .color = theme.muted });
+    ui.text(c, texts.of(p.lang).tones_hint, .{ .size = 11, .color = theme.muted });
 }
 
 fn promptBody(p: *Palette, c: *ui.Context, prompt: Prompt) void {
+    const t = texts.of(p.lang);
     {
         const pad = ui.div(c).wFull().px(10).pt(10).pb(6);
         defer pad.end();
         const card = ui.div(c).column().wFull().gap(8).px(18).py(16).rounded(10)
             .bg(theme.selection).border(accent_border);
         defer card.end();
-        ui.text(
-            c,
-            "Zum Einfügen braucht Zugriff die Bedienungshilfen",
-            .{ .size = 15, .line_height = 20, .color = theme.text },
-        );
-        ui.text(
-            c,
-            "Zugriff legt das Emoji in die Zwischenablage, gibt den Fokus an die App davor zurück, " ++
-                "sendet ⌘V und stellt die Zwischenablage danach wieder her. Tastendrücke an andere Apps " ++
-                "erlaubt macOS nur mit dieser Erlaubnis. Ohne sie kopiert ↵ nur.",
-            .{ .size = 12, .line_height = 18, .color = theme.muted, .wrap = true },
-        );
+        ui.text(c, t.prompt_title, .{ .size = 15, .line_height = 20, .color = theme.text });
+        ui.text(c, t.prompt_body, .{ .size = 12, .line_height = 18, .color = theme.muted, .wrap = true });
     }
     const rows = [_]struct { PromptRow, []const u8, []const u8, []const u8, []const u8 }{
-        .{ .open_settings, "⚙️", "Systemeinstellungen öffnen", c.print(
-            "Datenschutz & Sicherheit › Bedienungshilfen › Zugriff · {s} wird kopiert",
-            .{prompt.glyph},
-        ), "↵" },
-        .{ .copy_only, "📋", "Nur kopieren", c.print(
-            "{s} liegt dann in der Zwischenablage, ⌘V fügt ein",
-            .{prompt.glyph},
-        ), "⌘↵" },
+        .{
+            .open_settings,
+            "⚙️",
+            t.prompt_settings,
+            texts.print(c, p.lang, "prompt_settings_detail", .{prompt.glyph}),
+            "↵",
+        },
+        .{
+            .copy_only,
+            "📋",
+            t.prompt_copy_only,
+            texts.print(c, p.lang, "prompt_copy_detail", .{prompt.glyph}),
+            "⌘↵",
+        },
     };
     for (rows) |r| {
         const selected = r[0] == prompt.row;

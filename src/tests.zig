@@ -1,6 +1,7 @@
 //! Every test of the project, in one binary: `zig build test`.
 test {
     _ = @import("core/text.zig");
+    _ = @import("core/language.zig");
     _ = @import("core/item.zig");
     _ = @import("core/query.zig");
     _ = @import("core/matcher.zig");
@@ -28,6 +29,9 @@ test {
     _ = @import("ui/tests_emoji.zig");
     _ = @import("ui/help_view.zig");
     _ = @import("ui/tests_help.zig");
+    _ = @import("ui/tests_language.zig");
+    _ = @import("ui/texts.zig");
+    _ = @import("messages.zig");
     _ = @import("daemon.zig");
     _ = @import("logging.zig");
     _ = @import("main.zig");

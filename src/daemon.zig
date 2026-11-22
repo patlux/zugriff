@@ -11,6 +11,7 @@ const Allocator = std.mem.Allocator;
 const nanoui = @import("nanoui");
 const build_options = @import("build_options");
 const control = @import("control.zig");
+const messages = @import("messages.zig");
 const sync = @import("sync.zig");
 const agent = @import("agent.zig");
 const Catcher = @import("mac/catcher.zig").Catcher;
@@ -44,7 +45,7 @@ pub const Daemon = struct {
         const socket = try control.socketPath(arena, home);
         if (control.isRunning(io, socket)) {
             _ = control.request(arena, io, socket, "show") catch |e| log.warn("show: {t}", .{e});
-            std.debug.print("Zugriff läuft bereits; Palette wird angezeigt.\n", .{});
+            std.debug.print("{s}", .{messages.of(settings.locale.language).already_running});
             return;
         }
         var exe_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
@@ -124,8 +125,9 @@ pub const Daemon = struct {
         const d: *Daemon = @ptrCast(@alignCast(ctx));
         var answer_buf: [512]u8 = undefined;
         var fba: std.heap.FixedBufferAllocator = .init(&answer_buf);
-        const ui = control.request(fba.allocator(), d.io, d.ui_socket, "status") catch "UI-Prozess nicht geladen";
-        return std.mem.print(buf, "Zugriff {s} Daemon (pid {d}); {s}", .{
+        const lang = d.settings.locale.language;
+        const ui = control.request(fba.allocator(), d.io, d.ui_socket, "status") catch messages.of(lang).ui_not_loaded;
+        return messages.bufPrint(buf, lang, "daemon_status", .{
             build_options.version,
             std.c.getpid(),
             ui,
@@ -209,7 +211,7 @@ pub const Daemon = struct {
     fn spawn(d: *Daemon, then: control.Command) void {
         var secs_buf: [16]u8 = undefined;
         const secs = std.mem.print(&secs_buf, "{d}", .{d.settings.unload_after_s orelse 0}) catch unreachable;
-        const argv = [_][]const u8{
+        const all = [_][]const u8{
             d.exe,
             "ui",
             "--socket",
@@ -218,9 +220,13 @@ pub const Daemon = struct {
             secs,
             "--then",
             @tagName(then),
+            "--language",
+            if (d.settings.chosen_language) |l| l.code() else "",
         };
+        // Without `--language` the UI process reads macOS as the daemon did.
+        const argv = if (d.settings.chosen_language != null) all[0..] else all[0 .. all.len - 2];
         const started_us = agent.nowUs();
-        d.child = std.process.spawn(d.io, .{ .argv = &argv }) catch |e| {
+        d.child = std.process.spawn(d.io, .{ .argv = argv }) catch |e| {
             d.catcher.end();
             return log.err("UI-Prozess lässt sich nicht starten: {t}", .{e});
         };

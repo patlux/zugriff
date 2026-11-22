@@ -9,35 +9,11 @@ const logging = @import("logging.zig");
 const control = @import("control.zig");
 const apps = @import("mac/apps.zig");
 const icons = @import("mac/icons.zig");
+const locale = @import("mac/locale.zig");
+const messages = @import("messages.zig");
+const Language = core.Language;
 
 pub const std_options: std.Options = .{ .log_level = .info, .logFn = logging.logFn };
-
-const help =
-    \\Zugriff — schnelle native Command Palette für macOS
-    \\
-    \\Befehle:
-    \\  zugriff                        Palette starten (Cmd+Space, Ctrl+Cmd+Space)
-    \\  zugriff run [--hotkey <spec>] [--emoji-hotkey <spec|none>]
-    \\              [--unload-after <s|never>] [--unload-mode window|process]
-    \\                                 Palette mit eigenen Hotkeys starten; mit --unload-after
-    \\                                 wird sie nach so vielen Sekunden Ruhe entladen: das
-    \\                                 Fenster (window: ~35 MB, Öffnen ~40 ms langsamer) oder
-    \\                                 der UI-Prozess (process: ~9 MB, ~150 ms langsamer)
-    \\  zugriff show                   Laufende Palette anzeigen
-    \\  zugriff hide                   Laufende Palette ausblenden
-    \\  zugriff toggle                 Laufende Palette umschalten
-    \\  zugriff emoji                  Emoji-Auswahl anzeigen (Ctrl+Cmd+Space)
-    \\  zugriff quit                   Laufende Palette beenden
-    \\  zugriff status                 Version und Einfüge-Erlaubnis der laufenden Palette
-    \\  zugriff apps [query]           Installierte Apps suchen (ohne UI)
-    \\  zugriff emojis [suche]         Emoji suchen wie in der Palette (ohne UI)
-    \\  zugriff icons                  App-Icons in den Cache rendern (ohne UI)
-    \\  zugriff calc <aufgabe>         Aufgabe rechnen wie in der Palette (ohne UI)
-    \\  zugriff --version              Version
-    \\
-    \\Hotkey-Beispiele: cmd+space, ctrl+cmd+space, alt+space, ctrl+shift+space, cmd+k
-    \\
-;
 
 pub fn main(init: std.process.Init) !void {
     logging.start();
@@ -45,9 +21,27 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const home = init.environ_map.get("HOME");
     const all_args = try init.minimal.args.toSlice(arena);
-    // nanoui's own flags (`--nanoui-snapshot=…`) belong to the agent.
+    // nanoui's own flags (`--nanoui-snapshot=…`) belong to the agent;
+    // `--language` applies to every command.
     var args: std.ArrayList([]const u8) = .empty;
-    for (all_args[1..]) |arg| if (!std.mem.startsWith(u8, arg, "--nanoui-")) try args.append(arena, arg);
+    var chosen: ?Language = null;
+    var language_error: ?OptionError = null;
+    var i: usize = 1;
+    while (i < all_args.len) : (i += 1) {
+        const arg = all_args[i];
+        if (std.mem.startsWith(u8, arg, "--nanoui-")) continue;
+        if (!std.mem.eql(u8, arg, "--language")) {
+            try args.append(arena, arg);
+            continue;
+        }
+        i += 1;
+        if (i >= all_args.len) {
+            language_error = error.MissingValue;
+        } else if (Language.parse(all_args[i])) |l| chosen = l else language_error = error.InvalidLanguage;
+    }
+    const loc: core.Locale = if (chosen) |l| .both(l) else locale.current();
+    const lang = loc.language;
+    if (language_error) |e| optionError(lang, e);
 
     var out_buf: [4096]u8 = undefined;
     var out_writer = std.Io.File.stdout().writer(io, &out_buf);
@@ -57,7 +51,9 @@ pub fn main(init: std.process.Init) !void {
     const command = if (args.items.len > 0) args.items[0] else "run";
     const rest = if (args.items.len > 0) args.items[1..] else args.items;
     if (std.mem.eql(u8, command, "run")) {
-        const settings = parseRun(rest) catch |e| optionError(e);
+        var settings = parseRun(rest) catch |e| optionError(lang, e);
+        settings.locale = loc;
+        settings.chosen_language = chosen;
         const resident = residentInit(init);
         if (settings.unload_mode == .process) {
             logging.setRole("daemon");
@@ -69,41 +65,46 @@ pub fn main(init: std.process.Init) !void {
     // Internal: the UI process `--unload-mode process` starts (`daemon.zig`).
     if (std.mem.eql(u8, command, "ui")) {
         logging.setRole("ui");
-        const settings = parseUi(rest) catch |e| optionError(e);
+        var settings = parseUi(rest) catch |e| optionError(lang, e);
+        settings.locale = loc;
         const resident = residentInit(init);
         return agent.Agent.run(resident.gpa, io, home, resident, settings);
     }
     if (control.Command.parse(command) != null or std.mem.eql(u8, command, "status")) {
         const socket = try control.socketPath(arena, home);
         const answer = control.request(arena, io, socket, command) catch |e| {
-            std.debug.print("zugriff: Zugriff läuft nicht ({t}); starte ihn mit `zugriff`\n", .{e});
+            messages.debugPrint(lang, "not_running", .{e});
             std.process.exit(1);
         };
         if (std.mem.eql(u8, command, "status")) try out.print("{s}\n", .{answer});
         return;
     }
-    if (std.mem.eql(u8, command, "apps")) return listApps(arena, io, home, out, try std.mem.join(arena, " ", rest));
-    if (std.mem.eql(u8, command, "emojis")) return listEmoji(arena, out, try std.mem.join(arena, " ", rest));
-    if (std.mem.eql(u8, command, "icons")) return warmIcons(arena, io, home, out);
-    if (std.mem.eql(u8, command, "calc")) return printCalculation(arena, out, try std.mem.join(arena, " ", rest));
+    if (std.mem.eql(u8, command, "apps")) {
+        return listApps(arena, io, home, out, lang, try std.mem.join(arena, " ", rest));
+    }
+    if (std.mem.eql(u8, command, "emojis")) return listEmoji(arena, out, lang, try std.mem.join(arena, " ", rest));
+    if (std.mem.eql(u8, command, "icons")) return warmIcons(arena, io, home, out, lang);
+    if (std.mem.eql(u8, command, "calc")) return printCalculation(arena, out, loc, try std.mem.join(arena, " ", rest));
     if (std.mem.eql(u8, command, "--version") or std.mem.eql(u8, command, "version")) {
         return out.print("zugriff {s}\n", .{build_options.version});
     }
     if (std.mem.eql(u8, command, "help") or std.mem.eql(u8, command, "-h") or std.mem.eql(u8, command, "--help")) {
-        return out.writeAll(help);
+        return out.writeAll(messages.of(lang).help);
     }
-    std.debug.print("Unbekannter Befehl: {s}\n\n{s}", .{ command, help });
+    messages.debugPrint(lang, "unknown_command", .{ command, messages.of(lang).help });
     std.process.exit(1);
 }
 
-const OptionError = error{ MissingValue, UnknownOption, InvalidValue, ProcessNeedsTime };
+const OptionError = error{ MissingValue, UnknownOption, InvalidValue, ProcessNeedsTime, InvalidLanguage };
 
-fn optionError(e: OptionError) noreturn {
+fn optionError(lang: Language, e: OptionError) noreturn {
+    const m = messages.of(lang);
     std.debug.print("zugriff: {s}\n", .{switch (e) {
-        error.MissingValue => "die Option braucht einen Wert",
-        error.UnknownOption => "unbekannte Option für `run`",
-        error.InvalidValue => "`--unload-after` erwartet Sekunden oder `never`, `--unload-mode` window oder process",
-        error.ProcessNeedsTime => "`--unload-mode process` braucht `--unload-after <sekunden>`",
+        error.MissingValue => m.option_missing_value,
+        error.UnknownOption => m.option_unknown,
+        error.InvalidValue => m.option_invalid,
+        error.ProcessNeedsTime => m.option_process_needs_time,
+        error.InvalidLanguage => m.option_language,
     }});
     std.process.exit(1);
 }
@@ -168,14 +169,21 @@ fn parseRun(args: []const []const u8) OptionError!agent.Settings {
     return keys;
 }
 
-fn listApps(a: std.mem.Allocator, io: std.Io, home: ?[]const u8, out: *std.Io.Writer, query_text: []const u8) !void {
+fn listApps(
+    a: std.mem.Allocator,
+    io: std.Io,
+    home: ?[]const u8,
+    out: *std.Io.Writer,
+    lang: Language,
+    query_text: []const u8,
+) !void {
     var list = try apps.discover(a, io, home);
     defer list.deinit();
     var catalog = try core.Catalog.init(a, list.items);
     defer catalog.deinit();
     const query = try core.Query.init(a, query_text);
     const hits = try catalog.search(a, query);
-    try out.print("{d} Apps, {d} Treffer\n", .{ catalog.len(), hits.len });
+    try messages.print(out, lang, "apps_found", .{ catalog.len(), hits.len });
     for (hits[0..@min(hits.len, 50)]) |hit| {
         const it = catalog.items[hit.index];
         try out.print("{s:>8}  {s:<34}  {s}\n", .{ try a.print("{d}", .{hit.score}), it.title, it.subtitle });
@@ -183,11 +191,11 @@ fn listApps(a: std.mem.Allocator, io: std.Io, home: ?[]const u8, out: *std.Io.Wr
 }
 
 /// Searches the emoji like the picker and prints the best hits.
-fn listEmoji(a: std.mem.Allocator, out: *std.Io.Writer, query: []const u8) !void {
+fn listEmoji(a: std.mem.Allocator, out: *std.Io.Writer, lang: Language, query: []const u8) !void {
     const count = core.emoji.table_len;
-    if (core.text.trim(query).len == 0) return out.print("{d} Emoji\n", .{count});
+    if (core.text.trim(query).len == 0) return messages.print(out, lang, "emoji_total", .{count});
     const hits = try core.emoji.search(a, query, &.{});
-    try out.print("{d} Emoji, {d} Treffer\n", .{ count, hits.len });
+    try messages.print(out, lang, "emoji_found", .{ count, hits.len });
     for (hits[0..@min(hits.len, 30)]) |i| {
         const e = core.emoji.get(i);
         try out.print("{s}  {s:<44} ", .{ e.glyph, e.name });
@@ -199,7 +207,7 @@ fn listEmoji(a: std.mem.Allocator, out: *std.Io.Writer, query: []const u8) !void
 
 /// Renders every app icon into the cache without starting the palette: the
 /// AppKit work the palette does after it became visible, ahead of time.
-fn warmIcons(a: std.mem.Allocator, io: std.Io, home: ?[]const u8, out: *std.Io.Writer) !void {
+fn warmIcons(a: std.mem.Allocator, io: std.Io, home: ?[]const u8, out: *std.Io.Writer, lang: Language) !void {
     var list = try apps.discover(a, io, home);
     defer list.deinit();
     var reused: usize = 0;
@@ -217,30 +225,33 @@ fn warmIcons(a: std.mem.Allocator, io: std.Io, home: ?[]const u8, out: *std.Io.W
         },
         else => {},
     };
-    try out.print("{d} Icons aus dem Cache, {d} neu gerendert, {d} ohne Icon\n", .{ reused, rendered, missing });
+    try messages.print(out, lang, "icons_done", .{ reused, rendered, missing });
 }
 
 /// Calculates like the palette and prints the reading, the result, the
 /// other readings and the time it took.
-fn printCalculation(a: std.mem.Allocator, out: *std.Io.Writer, task: []const u8) !void {
+fn printCalculation(a: std.mem.Allocator, out: *std.Io.Writer, loc: core.Locale, task: []const u8) !void {
+    const lang = loc.language;
     const started = agent.nowUs();
     const calculation = try core.calc.calculate(a, task, 500 * std.time.ns_per_ms);
     const elapsed = agent.nowUs() - started;
-    const c = calculation orelse return out.writeAll("Keine Rechnung: Zugriff sucht dafür Apps.\n");
-    try out.print("Aufgabe:   {s}\n", .{c.task});
-    if (c.skipped.len > 0) try out.print("Übergangen: {s}\n", .{try std.mem.join(a, ", ", c.skipped)});
+    const c = calculation orelse return out.writeAll(messages.of(lang).calc_none);
+    try messages.print(out, lang, "calc_task", .{c.task});
+    if (c.skipped.len > 0) try messages.print(out, lang, "calc_skipped", .{try std.mem.join(a, ", ", c.skipped)});
     switch (c.outcome) {
         .answer => |ans| {
-            try out.print("Ergebnis:  {s}\n", .{try ans.shown(a)});
-            try out.print("Kopiert:   {s}  |  Nur Zahl: {s}\n", .{ ans.text, ans.number });
+            try messages.print(out, lang, "calc_result", .{try ans.shown(a)});
+            try messages.print(out, lang, "calc_copies", .{ ans.text, ans.number });
         },
-        .problem => |p| try out.print("Kein Ergebnis: {t}\n", .{p}),
+        .problem => |p| try messages.print(out, lang, "calc_problem", .{p}),
     }
-    for (c.alternatives) |alt| try out.print(
-        "Auch:      {s} {s} {s}\n",
+    for (c.alternatives) |alt| try messages.print(
+        out,
+        lang,
+        "calc_also",
         .{ alt.task, alt.answer.relation(), alt.answer.text },
     );
-    try out.print("Zeit:      {d} µs\n", .{elapsed});
+    try messages.print(out, lang, "calc_time", .{elapsed});
 }
 
 test {

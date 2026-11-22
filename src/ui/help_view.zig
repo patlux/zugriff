@@ -5,16 +5,19 @@
 //! `?` as the whole query lists what Zugriff understands, one topic per
 //! row with an example; `↵` puts the example into the search field, so the
 //! palette shows at once what it does. `help` and `hilfe` are search words
-//! too ("help" finds Tips): they only bring up a "Hilfe" row above the apps.
-//! The topics are constant data; nothing is loaded for them.
+//! in both languages ("help" finds Tips): they only bring up a "Hilfe" or
+//! "Help" row above the apps. The topics are constant data in `texts.zig`;
+//! nothing is loaded for them.
 const std = @import("std");
 const build_options = @import("build_options");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
 const core = @import("../core.zig");
 const theme = @import("theme.zig");
+const texts = @import("texts.zig");
 const palette = @import("palette.zig");
 const Palette = palette.Palette;
+const Language = core.Language;
 
 /// The query that opens the help.
 pub const query = "?";
@@ -33,58 +36,39 @@ pub const Topic = struct {
     tryable: bool = true,
 };
 
-pub const topics = [_]Topic{
-    .{
-        .glyph = "A",
-        .title = "Apps starten",
-        .subtitle = "Namen oder Teil davon tippen · ↵ startet, ⌘↵ zeigt im Finder",
-        .example = "saf",
-    },
-    .{
-        .glyph = "/",
-        .title = "Datei oder Ordner öffnen",
-        .subtitle = "Pfad mit / oder ~/ am Anfang · ↵ öffnet",
-        .example = "~/Downloads",
-    },
-    .{
-        .glyph = "↗",
-        .title = "Adresse öffnen",
-        .subtitle = "http:// oder https:// · ↵ öffnet im Browser",
-        .example = "https://ziglang.org",
-    },
-    .{
-        .glyph = "=",
-        .title = "Rechnen",
-        .subtitle = "Aufgabe tippen oder einfügen · ↵ kopiert, ⌥↵ nur die Zahl",
-        .example = "1.299 € + 19 %",
-    },
-    .{
-        .glyph = "≡",
-        .title = "Letzte Rechnungen",
-        .subtitle = "= allein zeigt die Rechnungen dieser Sitzung",
-        .example = "=",
-    },
-    .{
-        .glyph = emoji_glyph,
-        .title = "Emoji einfügen",
-        .subtitle = ": am Anfang oder ⌃⌘Leertaste · ⇥ Hauttöne",
-        .example = ":herz",
-    },
-    .{
-        .glyph = "⌘",
-        .title = "Tasten",
-        .subtitle = "↑↓ wählen, ↵ ausführen, esc schließt",
-        .example = "⌘↵ ⌥↵ ⇧↵",
-        .tryable = false,
-    },
-};
+pub const topic_count = texts.help_topic_count;
+
+/// The tile of each topic, in the order of `Texts.help_topics`.
+const glyphs = [topic_count][]const u8{ "A", "/", "↗", "=", "≡", emoji_glyph, "⌘" };
+/// The last topic, the keys, shows key combinations instead of a query.
+const keys_topic = topic_count - 1;
+/// The calculator's topic: its example follows the notation of the numbers.
+const calc_topic = 3;
+
+/// Topic `i` in the texts of `lang`, its example in the notation of `numbers`.
+pub fn topic(lang: Language, numbers: Language, i: usize) Topic {
+    const t = texts.of(lang).help_topics[i];
+    return .{
+        .glyph = glyphs[i],
+        .title = t.title,
+        .subtitle = t.subtitle,
+        .example = if (i == calc_topic) texts.of(numbers).help_topics[i].example else t.example,
+        .tryable = i != keys_topic,
+    };
+}
+
+/// Every topic, as `topic` gives them.
+pub fn topics(lang: Language, numbers: Language) [topic_count]Topic {
+    var out: [topic_count]Topic = undefined;
+    for (&out, 0..) |*t, i| t.* = topic(lang, numbers, i);
+    return out;
+}
 
 /// The search row that `help` and `hilfe` bring up (H2).
-pub const command: core.Item = .{
-    .title = "Hilfe",
-    .subtitle = "Was Zugriff kann · auch mit ? oder hilfe",
-    .action = .open_help,
-};
+pub fn command(lang: Language) core.Item {
+    const t = texts.of(lang);
+    return .{ .title = t.help_title, .subtitle = t.help_row_subtitle, .action = .open_help };
+}
 
 pub const State = struct {
     /// The help is on screen: the query is `?`.
@@ -141,15 +125,15 @@ pub fn setSeen(p: *Palette, seen: bool) void {
 }
 
 pub fn rowCount() usize {
-    return topics.len;
+    return topic_count;
 }
 
 /// `↵` on a topic: its example goes into the search field.
 pub fn confirm(p: *Palette) !void {
-    const topic = topics[@min(p.selected, topics.len - 1)];
-    if (!topic.tryable) return p.beep();
-    try p.setQuery(topic.example);
-    p.help.example = topic.example;
+    const t = topic(p.lang, p.numbers, @min(p.selected, topic_count - 1));
+    if (!t.tryable) return p.beep();
+    try p.setQuery(t.example);
+    p.help.example = t.example;
 }
 
 fn activate(p: *Palette, index: usize) !void {
@@ -160,26 +144,26 @@ fn activate(p: *Palette, index: usize) !void {
 pub fn body(p: *Palette, c: *ui.Context) !void {
     const list = ui.div(c).column().wFull();
     defer list.end();
-    for (topics, 0..) |topic, i| try topicRow(p, c, topic, i);
+    for (0..topic_count) |i| try topicRow(p, c, topic(p.lang, p.numbers, i), i);
 }
 
-fn topicRow(p: *Palette, c: *ui.Context, topic: Topic, index: usize) !void {
+fn topicRow(p: *Palette, c: *ui.Context, t: Topic, index: usize) !void {
     const selected = p.selected == index;
     const row = ui.div(c).row().wFull().h(theme.row_height).px(16).gap(12).itemsCenter().control();
     defer row.end();
     if (selected) _ = row.bg(theme.selection) else _ = row.hover(theme.surface);
     if (row.clicked()) try activate(p, index);
-    if (std.mem.eql(u8, topic.glyph, emoji_glyph))
-        palette.commandTile(p, c, topic.glyph)
+    if (std.mem.eql(u8, t.glyph, emoji_glyph))
+        palette.commandTile(p, c, t.glyph)
     else
-        symbolTile(c, topic.glyph, false);
+        symbolTile(c, t.glyph, false);
     {
         const col = ui.div(c).column().grow().minW(0).gap(1);
         defer col.end();
-        ui.text(c, topic.title, .{ .size = 14.5, .line_height = 18, .color = theme.text, .truncate = .ellipsis });
-        ui.text(c, topic.subtitle, .{ .size = 11, .line_height = 14, .color = theme.muted, .truncate = .ellipsis });
+        ui.text(c, t.title, .{ .size = 14.5, .line_height = 18, .color = theme.text, .truncate = .ellipsis });
+        ui.text(c, t.subtitle, .{ .size = 11, .line_height = 14, .color = theme.muted, .truncate = .ellipsis });
     }
-    ui.text(c, topic.example, .{ .size = 12, .line_height = 16, .color = theme.muted });
+    ui.text(c, t.example, .{ .size = 12, .line_height = 16, .color = theme.muted });
     if (selected) palette.selectionBar(c, 16, 11);
 }
 
@@ -196,22 +180,33 @@ pub fn symbolTile(c: *ui.Context, glyph: []const u8, accent: bool) void {
 }
 
 /// The footer's label, drawn here, and its hints.
-pub fn footer(p: *Palette, c: *ui.Context) []const []const u8 {
-    ui.text(c, footer_label, .{ .size = 11, .color = theme.muted, .truncate = .ellipsis });
-    if (!topics[@min(p.selected, topics.len - 1)].tryable) return &.{ "↑↓ Navigieren", "esc Schließen" };
-    return &.{ "↑↓ Navigieren", "↵ Ausprobieren", "esc Schließen" };
+pub fn footer(p: *Palette, c: *ui.Context, buf: *[6][]const u8) []const []const u8 {
+    const t = texts.of(p.lang);
+    ui.text(c, footerLabel(p.lang), .{ .size = 11, .color = theme.muted, .truncate = .ellipsis });
+    buf[0] = t.hint_navigate;
+    if (!topic(p.lang, p.numbers, @min(p.selected, topic_count - 1)).tryable) {
+        buf[1] = t.hint_close;
+        return buf[0..2];
+    }
+    buf[1] = t.hint_try;
+    buf[2] = t.hint_close;
+    return buf[0..3];
 }
 
 /// The topics and the version of the running binary.
-pub const footer_label = std.fmt.comptimePrint(
-    "Hilfe · {d} Themen · Version {s}",
-    .{ topics.len, build_options.version },
-);
+pub fn footerLabel(lang: Language) []const u8 {
+    return switch (lang) {
+        inline else => |l| std.fmt.comptimePrint(
+            texts.comptimeOf(l).help_footer,
+            .{ topic_count, build_options.version },
+        ),
+    };
+}
 
 /// What the footer adds to its label while the query is an example from
 /// the help (Z1).
 pub fn origin(p: *const Palette) ?[]const u8 {
-    return if (p.help.example != null) "aus der Hilfe" else null;
+    return if (p.help.example != null) texts.of(p.lang).help_origin else null;
 }
 
 /// Whether the header shows the quiet `? Hilfe` (H6): only over the empty
@@ -230,14 +225,14 @@ pub fn hint(p: *Palette, c: *ui.Context) !void {
         defer key.end();
         ui.text(c, query, .{ .size = 11, .line_height = 16, .weight = .medium, .color = theme.muted });
     }
-    ui.text(c, "Hilfe", .{ .size = 11, .line_height = 16, .color = theme.placeholder });
+    ui.text(c, texts.of(p.lang).help_title, .{ .size = 11, .line_height = 16, .color = theme.placeholder });
 }
 
 /// The footer tip of the empty app search, until the help was opened once (H6).
 pub fn tip(p: *const Palette) ?[]const u8 {
     if (p.help.seen != false) return null;
     if (core.text.trim(p.text()).len != 0 or p.direct != null) return null;
-    return "Tipp: ? zeigt, was Zugriff kann";
+    return texts.of(p.lang).help_tip;
 }
 
 test "only a lone question mark opens the help" {

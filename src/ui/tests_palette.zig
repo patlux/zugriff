@@ -101,6 +101,9 @@ pub const Fake = struct {
     }
 };
 
+/// What a test's calculation may take: far beyond any task of the tests.
+pub const test_budget_ns: u64 = 5 * std.time.ns_per_s;
+
 /// A palette with its tester and fake host, at the panel's size.
 pub const Harness = struct {
     fake: Fake,
@@ -108,8 +111,17 @@ pub const Harness = struct {
     t: ui.Tester,
 
     pub fn init(h: *Harness, apps: []const Item) !void {
+        return h.initIn(apps, .de);
+    }
+
+    /// A palette that speaks `lang`.
+    pub fn initIn(h: *Harness, apps: []const Item, lang: core.Language) !void {
         h.fake = .{ .arena = .init(testing.allocator) };
-        h.palette = .init(testing.allocator, testing.io, std.mem.span(std.c.getenv("HOME").?), h.fake.host());
+        const home = std.mem.span(std.c.getenv("HOME").?);
+        h.palette = .init(testing.allocator, testing.io, home, .both(lang), h.fake.host());
+        // The palette's 10 ms are for a person typing; under a loaded test
+        // run they would drop results at random.
+        h.palette.calc.budget_ns = test_budget_ns;
         _ = try h.palette.setCatalog(apps);
         try h.t.init(
             testing.allocator,

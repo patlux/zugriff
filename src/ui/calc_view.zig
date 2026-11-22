@@ -14,7 +14,9 @@ const calc = core.calc;
 const theme = @import("theme.zig");
 const palette = @import("palette.zig");
 const help_view = @import("help_view.zig");
+const texts = @import("texts.zig");
 const Palette = palette.Palette;
+const Language = core.Language;
 const log = std.log.scoped(.calc_view);
 
 /// What one keystroke may spend on calculating, other readings included.
@@ -60,6 +62,11 @@ const Entry = struct {
 
 pub const Calculator = struct {
     gpa: Allocator,
+    /// How tasks are read and results written.
+    numbers: Language,
+    /// What one keystroke may spend; tests give more, so a busy machine
+    /// cannot turn a result into "too complex".
+    budget_ns: u64 = budget_ns,
     /// Holds `current` and `sheet` until the next calculation.
     arena: std.heap.ArenaAllocator,
     /// The calculation the query stands for.
@@ -76,8 +83,8 @@ pub const Calculator = struct {
     /// Several pasted lines, calculated one by one.
     sheet: ?calc.Sheet = null,
 
-    pub fn init(gpa: Allocator) Calculator {
-        return .{ .gpa = gpa, .arena = .init(gpa) };
+    pub fn init(gpa: Allocator, numbers: Language) Calculator {
+        return .{ .gpa = gpa, .numbers = numbers, .arena = .init(gpa) };
     }
 
     pub fn deinit(k: *Calculator) void {
@@ -140,14 +147,14 @@ pub const Calculator = struct {
             k.showing_history = true;
             return true;
         }
-        k.current = try calc.calculate(k.arena.allocator(), raw, budget_ns);
+        k.current = try calc.calculate(k.arena.allocator(), raw, k.budget_ns);
         if (k.current != null) try k.query.appendSlice(k.gpa, raw);
         return false;
     }
 
     /// Calculates every pasted line.
     pub fn showSheet(k: *Calculator, lines: []const []const u8) !void {
-        k.sheet = try calc.sheet(k.arena.allocator(), lines, budget_ns);
+        k.sheet = try calc.sheet(k.arena.allocator(), lines, k.budget_ns);
     }
 
     /// The palette is closing. A result on screen goes into the history and
@@ -217,7 +224,7 @@ pub fn copySelected(p: *Palette, format: Format) !bool {
     const text = switch (format) {
         .shown => sel.answer.text,
         .number => sel.answer.number,
-        .with_task => if (p.calc.sheet) |s| try sheetTable(a, s) else try a.print(
+        .with_task => if (p.calc.sheet) |s| try sheetTable(a, s, p.lang) else try a.print(
             "{s} {s} {s}",
             .{ sel.task, sel.answer.relation(), sel.answer.text },
         ),
@@ -233,7 +240,7 @@ fn selectedAnswer(p: *Palette) ?struct { task: []const u8, answer: calc.Answer }
         .alternative => |i| .{ .task = k.alternatives()[i].task, .answer = k.alternatives()[i].answer },
         .history => |i| .{ .task = k.history.items[i].task, .answer = k.history.items[i].answer },
         .line => |i| .{ .task = k.sheet.?.lines[i].text, .answer = k.sheet.?.lines[i].answer orelse return null },
-        .total => .{ .task = "Summe", .answer = k.sheet.?.total.? },
+        .total => .{ .task = texts.of(p.lang).total, .answer = k.sheet.?.total.? },
     };
 }
 
@@ -249,19 +256,19 @@ pub fn editHistoryEntry(p: *Palette) !bool {
 
 /// Every line as `task<TAB>result`, then the sum: pastes as two columns
 /// into Numbers or Excel.
-fn sheetTable(a: Allocator, s: calc.Sheet) ![]const u8 {
+fn sheetTable(a: Allocator, s: calc.Sheet, lang: Language) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     for (s.lines, 0..) |line, i| {
         if (i > 0) try out.append(a, '\n');
         try out.print(a, "{s}\t{s}", .{ line.text, if (line.answer) |ans| ans.text else "" });
     }
-    if (s.total) |total| try out.print(a, "\nSumme\t{s}", .{total.text});
+    if (s.total) |total| try out.print(a, "\n{s}\t{s}", .{ texts.of(lang).total, total.text });
     return out.toOwnedSlice(a);
 }
 
 pub fn headerLabel(p: *Palette, c: *ui.Context) ?[]const u8 {
-    if (p.calc.sheet) |s| return c.print("{d} Zeilen", .{s.lines.len});
-    if (p.calc.showing_history) return "Verlauf";
+    if (p.calc.sheet) |s| return texts.print(c, p.lang, "lines", .{s.lines.len});
+    if (p.calc.showing_history) return texts.of(p.lang).history;
     return null;
 }
 
@@ -269,37 +276,36 @@ pub fn headerLabel(p: *Palette, c: *ui.Context) ?[]const u8 {
 /// selected.
 pub fn footer(p: *Palette, c: *ui.Context, buf: *[6][]const u8) ?[]const []const u8 {
     const k = &p.calc;
+    const t = texts.of(p.lang);
     var label: []const u8 = undefined;
     var hints: []const []const u8 = undefined;
     if (k.showing_history) {
         const n = k.history.items.len;
-        label = if (n == 1) "1 Rechnung" else c.print("{d} Rechnungen", .{n});
-        hints = if (n == 0) &.{"esc Schließen"} else &.{ "↵ Kopieren", "⌘↵ Bearbeiten", "esc Schließen" };
+        label = texts.count(c, p.lang, n, "calculations_one", "calculations");
+        hints = if (n == 0) fill(buf, &.{t.hint_close}) else fill(buf, &.{ t.hint_copy, t.hint_edit, t.hint_close });
     } else if (k.sheet) |s| {
-        const shown = if (s.total) |t| t.shown(c.alloc()) catch "" else "";
-        label = if (s.total != null) c.print(
-            "{d} Zeilen, Summe {s}",
-            .{ s.lines.len, shown },
-        ) else c.print("{d} Zeilen, keine Summe", .{s.lines.len});
+        const shown = if (s.total) |total| total.shown(c.alloc()) catch "" else "";
+        label = if (s.total != null)
+            texts.print(c, p.lang, "sheet_total", .{ s.lines.len, shown })
+        else
+            texts.print(c, p.lang, "sheet_no_total", .{s.lines.len});
         const without = s.lines.len - s.counted;
-        if (without > 0) label = c.print("{s} · {d} ohne Zahl", .{ label, without });
-        hints = &.{ "↑↓ Zeile", "↵ Kopieren", "⇧↵ Als Tabelle", "esc Schließen" };
+        if (without > 0) label = texts.print(c, p.lang, "sheet_without", .{ label, without });
+        hints = fill(buf, &.{ t.hint_line, t.hint_copy, t.hint_table, t.hint_close });
     } else {
         const calculation = k.current orelse return null;
         const on_calculation = k.row(p.selected) != null;
         if (!on_calculation and p.results.len > 0) return null;
         label = if (k.restored_ms) |since|
-            c.print("Letzte Rechnung · {s}", .{ago(c, since)})
-        else if (calculation.skipped.len == 1)
-            "Eingefügt · 1 Wort übergangen"
-        else if (calculation.skipped.len > 1)
-            c.print("Eingefügt · {d} Wörter übergangen", .{calculation.skipped.len})
+            texts.print(c, p.lang, "last_calculation", .{ago(c, p.lang, since)})
+        else if (calculation.skipped.len > 0)
+            texts.count(c, p.lang, calculation.skipped.len, "pasted_one", "pasted")
         else if (calculation.thousands_dot)
-            "2 Lesarten"
+            t.two_readings
         else if (calculation.conversion != null)
-            "Einheiten"
+            t.units
         else
-            "Rechner";
+            t.calculator;
         if (help_view.origin(p)) |o| label = c.print("{s} · {s}", .{ label, o });
         if (on_calculation) {
             var n: usize = 0;
@@ -308,29 +314,35 @@ pub fn footer(p: *Palette, c: *ui.Context, buf: *[6][]const u8) ?[]const []const
                 const units = for (alts) |alt| {
                     if (alt.kind != .binary) break false;
                 } else true;
-                buf[n] = if (units) "↑↓ Einheit" else "↑↓ Lesart";
+                buf[n] = if (units) t.hint_unit else t.hint_reading;
                 n += 1;
             }
-            for ([_][]const u8{ "↵ Kopieren", "⌥↵ Nur Zahl", "⇧↵ Mit Aufgabe", "esc Schließen" }) |h| {
+            for ([_][]const u8{ t.hint_copy, t.hint_number, t.hint_with_task, t.hint_close }) |h| {
                 buf[n] = h;
                 n += 1;
             }
             hints = buf[0..n];
-        } else hints = &.{"esc Schließen"};
+        } else hints = fill(buf, &.{t.hint_close});
     }
     ui.text(c, label, .{ .size = 11, .color = theme.muted, .truncate = .ellipsis });
     return hints;
 }
 
-/// `vor 12 s`, `vor 3 Min.`, `vor 2 Std.`, `vor 1 Tag`.
-pub fn ago(c: *ui.Context, since_ms: i64) []const u8 {
+/// `list` copied into `buf`: the footer's hints outlive this call.
+fn fill(buf: *[6][]const u8, list: []const []const u8) []const []const u8 {
+    @memcpy(buf[0..list.len], list);
+    return buf[0..list.len];
+}
+
+/// `vor 12 s`, `vor 3 Min.`, `vor 2 Std.`, `vor 1 Tag`; `12 s ago` in English.
+pub fn ago(c: *ui.Context, lang: Language, since_ms: i64) []const u8 {
     const s = @divTrunc(@max(0, since_ms), std.time.ms_per_s);
-    if (s < 5) return "gerade eben";
-    if (s < 60) return c.print("vor {d} s", .{s});
-    if (s < 3600) return c.print("vor {d} Min.", .{@divTrunc(s, 60)});
-    if (s < 86400) return c.print("vor {d} Std.", .{@divTrunc(s, 3600)});
-    if (s < 172800) return "vor 1 Tag";
-    return c.print("vor {d} Tagen", .{@divTrunc(s, 86400)});
+    if (s < 5) return texts.of(lang).ago_now;
+    if (s < 60) return texts.print(c, lang, "ago_seconds", .{s});
+    if (s < 3600) return texts.print(c, lang, "ago_minutes", .{@divTrunc(s, 60)});
+    if (s < 86400) return texts.print(c, lang, "ago_hours", .{@divTrunc(s, 3600)});
+    if (s < 172800) return texts.of(lang).ago_day;
+    return texts.print(c, lang, "ago_days", .{@divTrunc(s, 86400)});
 }
 
 /// The card, the other readings or the copy formats, and the app hits below.
@@ -338,6 +350,7 @@ pub fn body(p: *Palette, c: *ui.Context) !void {
     if (p.calc.showing_history) return historyBody(p, c);
     if (p.calc.sheet != null) return sheetBody(p, c);
     const calculation = p.calc.current orelse return p.hitList(c);
+    const t = texts.of(p.lang);
 
     {
         const pad = ui.div(c).wFull().px(10).pt(10).pb(6);
@@ -347,7 +360,7 @@ pub fn body(p: *Palette, c: *ui.Context) !void {
 
     const alts = p.calc.alternatives();
     if (alts.len > 0) {
-        section(c, alternativesTitle(alts));
+        section(c, alternativesTitle(p.lang, alts));
         for (alts, 0..) |alt, i| {
             const symbol = switch (alt.kind) {
                 .share, .before => "%",
@@ -359,7 +372,7 @@ pub fn body(p: *Palette, c: *ui.Context) !void {
                 p.selected == i + 1,
                 symbol,
                 try alt.answer.shown(c.alloc()),
-                alternativeSubtitle(c, alt),
+                alternativeSubtitle(c, p.lang, p.numbers, alt),
             )) {
                 p.selected = i + 1;
                 _ = try copySelected(p, .shown);
@@ -367,29 +380,24 @@ pub fn body(p: *Palette, c: *ui.Context) !void {
         }
     } else if (calculation.answer()) |ans| {
         if (p.results.len == 0) {
-            section(c, "Kopieren als");
-            formatRow(c, ans.text, "Ergebnis wie angezeigt", "↵");
-            formatRow(c, ans.number, "nur die Zahl, mit Dezimalpunkt", "⌥↵");
+            section(c, t.copy_as);
+            formatRow(c, ans.text, t.format_shown, "↵");
+            formatRow(c, ans.number, t.format_number, "⌥↵");
             formatRow(
                 c,
                 c.print("{s} {s} {s}", .{ calculation.task, ans.relation(), ans.text }),
-                "mit Aufgabe",
+                t.format_with_task,
                 "⇧↵",
             );
         }
     } else if (calculation.outcome.problem == .no_rates) {
         const note = ui.div(c).wFull().px(20).pt(8);
         defer note.end();
-        ui.text(
-            c,
-            "Zugriff rechnet nur lokal und lädt keine Wechselkurse. Ohne Umrechnung rechnet es " ++
-                "mit der Währung als Etikett: 100 € × 3 ergibt 300 €.",
-            .{ .size = 12, .line_height = 18, .color = theme.muted, .wrap = true },
-        );
+        ui.text(c, t.no_rates_note, .{ .size = 12, .line_height = 18, .color = theme.muted, .wrap = true });
     }
 
     if (p.results.len > 0) {
-        section(c, "Apps");
+        section(c, t.apps_section);
         const hits = ui.div(c).column().wFull().grow().minW(0);
         defer hits.end();
         p.hitList(c);
@@ -404,13 +412,13 @@ fn card(p: *Palette, c: *ui.Context, calculation: calc.Calculation, selected: bo
     switch (calculation.outcome) {
         .answer => |ans| {
             result = ans.shown(a) catch ans.text;
-            result_caption = resultCaption(calculation, ans);
+            result_caption = resultCaption(p.lang, calculation, ans);
         },
         .problem => |problem| {
-            const t = problemText(c, problem);
-            result = t.text;
-            result_caption = t.caption;
-            result_color = if (t.warns) theme.warning else theme.placeholder;
+            const shown = problemText(c, p.lang, problem);
+            result = shown.text;
+            result_caption = shown.caption;
+            result_color = if (shown.warns) theme.warning else theme.placeholder;
         },
     }
     const ok = calculation.outcome == .answer;
@@ -452,7 +460,7 @@ fn card(p: *Palette, c: *ui.Context, calculation: calc.Calculation, selected: bo
     if (stacked) {
         _ = box.column().center().gap(4);
         ui.text(c, calculation.task, task_style);
-        ui.text(c, taskCaption(c, calculation), caption_style);
+        ui.text(c, taskCaption(c, p.lang, calculation), caption_style);
         ui.div(c).h(6).end();
         ui.text(c, result, result_style);
         var cs = caption_style;
@@ -465,7 +473,7 @@ fn card(p: *Palette, c: *ui.Context, calculation: calc.Calculation, selected: bo
         const half = ui.div(c).column().grow().minW(0).itemsCenter().gap(6);
         defer half.end();
         ui.text(c, calculation.task, task_style);
-        ui.text(c, taskCaption(c, calculation), caption_style);
+        ui.text(c, taskCaption(c, p.lang, calculation), caption_style);
     }
     {
         const arrow = ui.div(c).size(30, 30).rounded(15).bg(theme.surface).center();
@@ -484,23 +492,20 @@ fn card(p: *Palette, c: *ui.Context, calculation: calc.Calculation, selected: bo
 
 fn historyBody(p: *Palette, c: *ui.Context) !void {
     const k = &p.calc;
+    const t = texts.of(p.lang);
     if (k.history.items.len == 0) {
         const box = ui.div(c).column().sizeFull().center().gap(4);
         defer box.end();
-        ui.text(c, "Noch keine Rechnungen", .{ .size = 14, .color = theme.text });
-        ui.text(
-            c,
-            "Ergebnisse dieser Sitzung erscheinen hier; sie liegen nur im Speicher.",
-            .{ .size = 12, .color = theme.muted },
-        );
+        ui.text(c, t.history_empty, .{ .size = 14, .color = theme.text });
+        ui.text(c, t.history_empty_detail, .{ .size = 12, .color = theme.muted });
         return;
     }
     const list = ui.div(c).column().wFull().grow().scrollY();
     defer list.end();
-    section(c, "Zuletzt gerechnet");
+    section(c, t.history_title);
     const now = p.now();
     for (k.history.items, 0..) |entry, i| {
-        const subtitle = c.print("{s} · {s}", .{ entry.task, ago(c, now - entry.at_ms) });
+        const subtitle = c.print("{s} · {s}", .{ entry.task, ago(c, p.lang, now - entry.at_ms) });
         if (calculatorRow(c, p.selected == i, "=", try entry.answer.shown(c.alloc()), subtitle)) {
             p.selected = i;
             _ = try copySelected(p, .shown);
@@ -546,7 +551,9 @@ fn sheetBody(p: *Palette, c: *ui.Context) !void {
             }
             if (line.answer) |ans| {
                 ui.text(c, try ans.shown(c.alloc()), .{ .size = 13, .weight = .medium, .color = theme.text });
-            } else ui.text(c, "ohne Zahl", .{ .size = 13, .weight = .medium, .color = theme.placeholder });
+            } else {
+                ui.text(c, texts.of(p.lang).no_number, .{ .size = 13, .weight = .medium, .color = theme.placeholder });
+            }
             if (selected) palette.selectionBar(c, 18, 6);
         }
     }
@@ -565,15 +572,22 @@ fn sheetBody(p: *Palette, c: *ui.Context) !void {
     {
         const col = ui.div(c).column().grow().minW(0).gap(1);
         defer col.end();
-        ui.text(c, "Summe", .{ .size = 14.5, .line_height = 18, .weight = .semibold, .color = theme.text });
+        ui.text(c, texts.of(p.lang).total, .{
+            .size = 14.5,
+            .line_height = 18,
+            .weight = .semibold,
+            .color = theme.text,
+        });
         const shownOf = struct {
             fn f(al: Allocator, ans: ?calc.Answer) []const u8 {
                 const x = ans orelse return "";
                 return x.shown(al) catch x.text;
             }
         }.f;
-        const detail = c.print(
-            "Mittel {s} · größte {s} · kleinste {s}",
+        const detail = texts.print(
+            c,
+            p.lang,
+            "sheet_stats",
             .{ shownOf(a, s.mean), shownOf(a, s.largest), shownOf(a, s.smallest) },
         );
         ui.text(c, detail, .{ .size = 11, .line_height = 14, .color = theme.muted, .truncate = .ellipsis });
@@ -582,98 +596,107 @@ fn sheetBody(p: *Palette, c: *ui.Context) !void {
     if (selected) palette.selectionBar(c, 18, 15);
 }
 
-fn taskCaption(c: *ui.Context, calculation: calc.Calculation) []const u8 {
+fn taskCaption(c: *ui.Context, lang: Language, calculation: calc.Calculation) []const u8 {
+    const t = texts.of(lang);
     const skipped = calculation.skipped;
     if (skipped.len > 0) {
         var list: std.ArrayList(u8) = .empty;
         const a = c.alloc();
         for (skipped, 0..) |word, i| {
-            const sep = if (i == 0) "" else if (i == skipped.len - 1) " und " else ", ";
-            list.print(a, "{s}„{s}“", .{ sep, word }) catch return "";
+            const sep = if (i == 0) "" else if (i == skipped.len - 1) t.list_and else ", ";
+            list.appendSlice(a, sep) catch return "";
+            texts.append(&list, "quoted", a, lang, .{word}) catch return "";
         }
-        return c.print("gelesen als · {s} übergangen", .{list.items});
+        return texts.print(c, lang, "read_as_skipped", .{list.items});
     }
-    if (calculation.thousands_dot) return "Punkt trennt Tausender, deutsch";
-    return "Aufgabe";
+    if (calculation.thousands_dot) return t.ambiguous;
+    return t.task;
 }
 
-fn resultCaption(calculation: calc.Calculation, ans: calc.Answer) []const u8 {
+fn resultCaption(lang: Language, calculation: calc.Calculation, ans: calc.Answer) []const u8 {
+    const t = texts.of(lang);
     if (ans.rounding) |r| return switch (r) {
-        .significant => std.fmt.comptimePrint("auf {d} gültige Stellen gerundet", .{calc.significant_digits}),
-        .cents => "auf Cent gerundet",
-        .hundredths => "auf zwei Nachkommastellen gerundet",
+        .significant => switch (lang) {
+            inline else => |l| std.fmt.comptimePrint(
+                texts.comptimeOf(l).rounded_significant,
+                .{calc.significant_digits},
+            ),
+        },
+        .cents => t.rounded_cents,
+        .hundredths => t.rounded_hundredths,
     };
-    if (calculation.conversion == .decimal_data) return "dezimal, wie der Finder zählt";
-    return "Ergebnis";
+    if (calculation.conversion == .decimal_data) return t.decimal_data;
+    return t.result;
 }
 
 /// Text, caption and whether the warning colour applies. Unfinished tasks
 /// stay calm: nothing is wrong while typing.
-fn problemText(c: *ui.Context, problem: calc.Problem) struct { text: []const u8, caption: []const u8, warns: bool } {
+fn problemText(
+    c: *ui.Context,
+    lang: Language,
+    problem: calc.Problem,
+) struct { text: []const u8, caption: []const u8, warns: bool } {
+    const t = texts.of(lang);
     return switch (problem) {
         .incomplete => |gap| switch (gap) {
             .number => |after| .{
                 .text = "…",
-                .caption = if (after.len == 0) "es fehlt eine Zahl" else c.print(
-                    "es fehlt eine Zahl nach {s}",
-                    .{after},
+                .caption = if (after.len == 0) t.missing_number else texts.print(
+                    c,
+                    lang,
+                    "missing_number_after",
+                    .{if (std.mem.eql(u8, after, "von")) t.word_of else after},
                 ),
                 .warns = false,
             },
-            .closing_parenthesis => .{ .text = "…", .caption = "eine Klammer ist noch offen", .warns = false },
-            .unit => .{ .text = "…", .caption = "es fehlt die Einheit nach „in“", .warns = false },
+            .closing_parenthesis => .{ .text = "…", .caption = t.open_bracket, .warns = false },
+            .unit => .{ .text = "…", .caption = t.missing_unit, .warns = false },
         },
-        .division_by_zero => .{ .text = "nicht definiert", .caption = "Division durch null", .warns = true },
-        .not_real => .{
-            .text = "keine reelle Zahl",
-            .caption = "zum Beispiel die Wurzel einer negativen Zahl",
-            .warns = true,
-        },
-        .incompatible => .{
-            .text = "passt nicht",
-            .caption = "die Einheiten lassen sich nicht ineinander umrechnen",
-            .warns = true,
-        },
-        .no_rates => .{ .text = "kein Kurs", .caption = "Kurse bräuchten das Netz", .warns = false },
-        .too_slow => .{
-            .text = "zu aufwendig",
-            .caption = "die Rechnung dauert länger, als die Palette wartet",
-            .warns = false,
-        },
-        .unreadable => .{ .text = "nicht lesbar", .caption = "Zugriff versteht diese Aufgabe nicht", .warns = false },
+        .division_by_zero => .{ .text = t.undefined_result, .caption = t.division_by_zero, .warns = true },
+        .not_real => .{ .text = t.not_real, .caption = t.not_real_detail, .warns = true },
+        .incompatible => .{ .text = t.incompatible, .caption = t.incompatible_detail, .warns = true },
+        .no_rates => .{ .text = t.no_rate, .caption = t.no_rate_detail, .warns = false },
+        .too_slow => .{ .text = t.too_complex, .caption = t.too_complex_detail, .warns = false },
+        .unreadable => .{ .text = t.unreadable, .caption = t.unreadable_detail, .warns = false },
     };
 }
 
-fn alternativesTitle(alts: []const calc.Alternative) []const u8 {
+fn alternativesTitle(lang: Language, alts: []const calc.Alternative) []const u8 {
+    const t = texts.of(lang);
     var binary = true;
     var decimal_point = true;
     for (alts) |alt| {
         binary = binary and alt.kind == .binary;
         decimal_point = decimal_point and alt.kind == .decimal_point;
     }
-    if (binary) return "Auch in";
-    if (decimal_point) return "Andere Lesart";
-    return "Auch möglich";
+    if (binary) return t.also_in;
+    if (decimal_point) return t.other_reading;
+    return t.also_possible;
 }
 
-fn alternativeSubtitle(c: *ui.Context, alt: calc.Alternative) []const u8 {
+fn alternativeSubtitle(c: *ui.Context, lang: Language, numbers: Language, alt: calc.Alternative) []const u8 {
+    const t = texts.of(lang);
     const task = alt.task;
     return switch (alt.kind) {
-        .share => |surcharge| c.print("{s} · {s}", .{ task, if (surcharge) "nur der Aufschlag" else "nur der Abzug" }),
+        .share => |surcharge| c.print("{s} · {s}", .{ task, if (surcharge) t.surcharge_only else t.discount_only }),
         .before => |surcharge| c.print(
             "{s} · {s}",
-            .{ task, if (surcharge) "wenn der Aufschlag schon drin ist" else "wenn der Abzug schon abgezogen ist" },
+            .{ task, if (surcharge) t.surcharge_included else t.discount_included },
         ),
-        .decimal_point => c.print("gelesen als {s} · Punkt als Dezimalzeichen, englisch", .{task}),
-        .binary => |unit| c.print("binär · 1 {s} = {s} Byte", .{ unit, binaryBytes(unit) }),
+        .decimal_point => texts.print(c, lang, "other_notation", .{task}),
+        .binary => |unit| texts.print(c, lang, "binary", .{ unit, binaryBytes(numbers, unit) }),
     };
 }
 
-fn binaryBytes(unit: []const u8) []const u8 {
-    if (std.mem.eql(u8, unit, "KiB")) return "1.024";
-    if (std.mem.eql(u8, unit, "MiB")) return "1.048.576";
-    if (std.mem.eql(u8, unit, "GiB")) return "1.073.741.824";
-    return "1.099.511.627.776";
+/// The bytes of one binary unit, thousands grouped in the notation of `numbers`.
+fn binaryBytes(numbers: Language, unit: []const u8) []const u8 {
+    const sizes = [_]struct { []const u8, []const u8, []const u8 }{
+        .{ "KiB", "1.024", "1,024" },
+        .{ "MiB", "1.048.576", "1,048,576" },
+        .{ "GiB", "1.073.741.824", "1,073,741,824" },
+    };
+    for (sizes) |size| if (std.mem.eql(u8, unit, size[0])) return if (numbers == .de) size[1] else size[2];
+    return if (numbers == .de) "1.099.511.627.776" else "1,099,511,627,776";
 }
 
 pub fn section(c: *ui.Context, title: []const u8) void {

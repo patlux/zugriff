@@ -106,6 +106,7 @@ pub fn main(init: std.process.Init) !void {
             gpa,
             io,
             init.environ_map.get("HOME"),
+            .both(.de),
             .{
                 .ctx = &host,
                 .emit = Host.emit,
@@ -115,6 +116,8 @@ pub fn main(init: std.process.Init) !void {
             },
         );
         defer p.deinit();
+        // Pictures do not depend on how busy the machine is.
+        p.calc.budget_ns = 5 * std.time.ns_per_s;
         _ = try p.setCatalog(&items);
         var t: ui.Tester = undefined;
         try t.init(gpa, .init(&p, Palette.view), .{ .width = 640, .height = 420, .theme = theme.window });

@@ -15,6 +15,7 @@ const core = @import("core.zig");
 const ui_palette = @import("ui/palette.zig");
 const theme = @import("ui/theme.zig");
 const control = @import("control.zig");
+const messages = @import("messages.zig");
 const app_scan = @import("app_scan.zig");
 const emoji_prefs = @import("emoji_prefs.zig");
 const help_seen = @import("help_seen.zig");
@@ -33,6 +34,11 @@ const InsertSupport = ui_palette.InsertSupport;
 const log = std.log.scoped(.zugriff);
 
 pub const Settings = struct {
+    /// The palette's texts and emoji names, and the calculator's notation;
+    /// `main` sets it from `--language` or from macOS.
+    locale: core.Locale = .both(.en),
+    /// `--language`, which the daemon hands on to the UI process.
+    chosen_language: ?core.Language = null,
     palette: []const u8 = "cmd+space",
     /// The macOS character viewer's shortcut; null: no emoji hot key.
     emoji: ?[]const u8 = "ctrl+cmd+space",
@@ -129,7 +135,7 @@ pub const Agent = struct {
         const socket = settings.socket orelse try control.socketPath(init.arena.allocator(), home);
         if (control.isRunning(io, socket)) {
             _ = control.request(init.arena.allocator(), io, socket, "show") catch |e| log.warn("show: {t}", .{e});
-            std.debug.print("Zugriff läuft bereits; Palette wird angezeigt.\n", .{});
+            std.debug.print("{s}", .{messages.of(settings.locale.language).already_running});
             return;
         }
 
@@ -149,6 +155,7 @@ pub const Agent = struct {
             gpa,
             io,
             home,
+            settings.locale,
             .{ .ctx = agent, .emit = emitted, .clipboard = readClipboard, .now_ms = nowMs, .beep = beep },
         );
         defer agent.palette.deinit();
@@ -358,12 +365,15 @@ pub const Agent = struct {
         }
     }
 
-    fn status(_: *anyopaque, buf: []u8) []const u8 {
-        return std.mem.print(buf, "Zugriff {s} (pid {d}); Bedienungshilfen: {s}; Eingabeschutz: {s}", .{
+    fn status(ctx: *anyopaque, buf: []u8) []const u8 {
+        const a: *Agent = @ptrCast(@alignCast(ctx));
+        const lang = a.settings.locale.language;
+        const m = messages.of(lang);
+        return messages.bufPrint(buf, lang, "status", .{
             build_options.version,
             std.c.getpid(),
-            if (insert.isTrusted()) "erlaubt, ↵ fügt Emoji ein" else "fehlt, ↵ kopiert nur",
-            if (insert.secureInputActive()) "an" else "aus",
+            if (insert.isTrusted()) m.permission_granted else m.permission_missing,
+            if (insert.secureInputActive()) m.on else m.off,
         }) catch "Zugriff";
     }
 

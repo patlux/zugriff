@@ -2,6 +2,9 @@
 //! direct targets, the calculator and the emoji table. Nothing here knows
 //! macOS or nanoui.
 pub const text = @import("core/text.zig");
+const language = @import("core/language.zig");
+pub const Language = language.Language;
+pub const Locale = language.Locale;
 const item = @import("core/item.zig");
 pub const Item = item.Item;
 pub const Action = item.Action;
