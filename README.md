@@ -7,9 +7,9 @@ display under the pointer. Type a few letters and press Return to open an app,
 calculate a task or insert an emoji. The app you were working in keeps its
 focus, and nothing leaves your Mac.
 
-Zugriff is a single 3.5 MB binary written in Zig 0.17 on
+Zugriff is a single 3.6 MB binary written in Zig 0.17 on
 [nanoui](https://github.com/justrach/nanoui). It runs as a background agent
-without a Dock icon. Its interface is in German.
+without a Dock icon and speaks English and German.
 
 <table>
   <tr>
@@ -32,7 +32,8 @@ translucent, with the desktop blurred behind it.</sub>
 | Opening after the hot key | 11–12 ms (default), about 104 ms with `--unload-mode process` |
 | Memory | 25 MB idle, 48–52 MB while open; 9–10 MB idle with `--unload-mode process` |
 | Start | ready for the hot key about 130 ms after launch |
-| Binary | 3.5 MB, nothing to install besides it |
+| Binary | 3.6 MB, nothing to install besides it |
+| Languages | English and German, following macOS |
 | Network | none: no account, no telemetry |
 
 Details and the measuring method are in [Performance](#performance).
@@ -57,22 +58,27 @@ Details and the measuring method are in [Performance](#performance).
 
 ### Calculate
 
-Type or paste a task. Zugriff reads German and English notation, the operator
-signs that come out of Word, PDFs and web pages, and words such as `mal`,
-`zzgl.` and `von` (`of`).
+Type or paste a task. Zugriff reads English and German notation, the
+operator signs that come out of Word, PDFs and web pages, and words such as
+`times`, `divided by`, `of`, `mal`, `zzgl.` and `von`.
 
 | Task | Result |
 | --- | --- |
-| `(1.299 + 89,90) × 3` | 4.166,70 |
-| `1,299.50 * 2` | 2.599,00 |
-| `80 + 19 %` | 95,2 (as on a pocket calculator) |
-| `19 % von 80` | 15,2 |
-| `Netto 1.299,00 € zzgl. 19 % MwSt.` | 1.545,81 €, and the other readings 246,81 € (the 19 % alone) and ≈ 1.091,60 € (19 % already included) |
-| `2,4 GB in MB` | 2.400 MB, also in MiB and GiB |
-| `100 km/h in m/s` | ≈ 27,78 m/s |
+| `(1,299 + 89.90) × 3` | 4,166.70 |
+| `80 + 19%` | 95.2 (as on a pocket calculator) |
+| `19% of 80` | 15.2 |
+| `Net $1,299.00 plus 19% sales tax` | $1,545.81, and the other readings $246.81 (the 19% alone) and ≈ $1,091.60 (19% already included) |
+| `2.4 GB in MB` | 2,400 MB, also in MiB and GiB |
+| `100 km/h in m/s` | ≈ 27.78 m/s |
+| `2 weeks in days` | 14 days |
 | `20 °C in °F` | 68 °F |
-| `0,1 + 0,2` | 0,3 (exact) |
+| `0.1 + 0.2` | 0.3 (exact) |
 | `tan 45` | 1 (exact) |
+
+The results follow the notation of your region: with a decimal comma,
+`Netto 1.299,00 € zzgl. 19 % MwSt.` gives 1.545,81 €. A number that reads
+both ways, such as `1,250` or `1.250`, is read the way of your region, and the
+other reading is offered below it.
 
 - Units: length, area, volume, mass, time, speed, temperature, angle and data
   (decimal and binary). Convert with `in`.
@@ -91,8 +97,9 @@ signs that come out of Word, PDFs and web pages, and words such as `mal`,
 ### Insert emoji
 
 - All 1,906 emoji of Unicode 16, compiled into the binary.
-- Search in German or English by name, keyword or shortcode: `daumen`,
-  `thumbsup`, `herz`. Umlauts are optional.
+- Search in English or German by name, keyword or shortcode: `heart`,
+  `thumbsup`, `herz`. Names in the palette's language rank first, and the
+  footer names the emoji in it. Umlauts are optional.
 - Open the picker with `⌃⌘Space`, with `:` at the start of a query, or through
   the *Emoji* row.
 - `↵` inserts the emoji into the app in front, `⌘↵` copies it, `⌘1`–`⌘9`
@@ -111,6 +118,18 @@ signs that come out of Word, PDFs and web pages, and words such as `mal`,
 - `?` lists everything the palette understands, each with an example. `↵` puts
   the example into the search field, so you see at once what it does.
 - `help` and `hilfe` find the help row too.
+
+### English and German
+
+- The texts and the emoji names follow the first language in System Settings
+  → General → Language & Region: German for German, English for every other
+  language.
+- The calculator's numbers follow the region: a decimal point means English
+  notation (`1,299.50`), a decimal comma German notation (`1.299,50`). With
+  English as the language and Germany as the region, the palette speaks English
+  and writes `1.299,50`.
+- `--language en` or `--language de` sets both, for `zugriff run` and for
+  every other command.
 
 ### Stays out of the way
 
@@ -188,8 +207,8 @@ for the hot key 125–140 ms after launch.
 The first start of a newly built or copied binary takes about 0.7 s longer
 once: Metal compiles the shaders and caches them for later starts.
 
-**Size:** 3.5 MB for the ReleaseSafe binary (arm64), including the emoji table
-with German and English names.
+**Size:** 3.6 MB for the ReleaseSafe binary (arm64), including the emoji table
+with German and English names and every text in both languages.
 
 ## Install
 
@@ -277,7 +296,8 @@ it again after every build.
 
 ## Command line
 
-The output of the commands is in German.
+The commands answer in the palette's language. Every command takes
+`--language de|en`.
 
 ```text
 zugriff                        Start the palette (⌘Space, ⌃⌘Space)
@@ -314,7 +334,7 @@ Hot keys are written like `cmd+space`, `ctrl+cmd+space`, `alt+space`,
 ```sh
 make hooks-install            # once per clone: the changeset pre-commit hook
 make verify                   # changesets, build, zig fmt, tests (Debug, ReleaseSafe), ziglint
-mise x -- zig build shots     # the palette's states as PNG in zig-out/shots, offscreen
+mise x -- zig build shots     # the palette's states as PNG in zig-out/shots/de and /en, offscreen
 ```
 
 The tests render the palette offscreen with nanoui's `ui.Tester`. They open no
@@ -322,7 +342,7 @@ window, register no hot key and touch neither the clipboard nor the icon cache.
 The real agent takes the global hot keys and can post `⌘V` to other apps, so
 try changes with their own `HOME` or on a separate test Mac.
 
-The pictures in `docs/images` come from `zig build shots`.
+The pictures in `docs/images` come from `zig build shots` (`en`).
 
 The emoji table (`src/core/emoji_data.zig` with its texts in
 `src/core/emoji_strings.txt`) is generated by `scripts/emoji_data.py` from
@@ -336,11 +356,12 @@ Every commit carries a changeset; the flow and releases are in
 ```text
 src/core/        Search, catalog, emoji table and calculator, without platform code
 src/mac/         App discovery, icons, launching, hot keys, panel, inserting (AppKit/Carbon)
-src/ui/          Palette, calculator, emoji and help views on nanoui, theme, emoji pictures
+src/ui/          Palette, calculator, emoji and help views on nanoui, theme, emoji pictures;
+                 texts.zig holds every text of the palette in German and English
 src/agent.zig    Resident agent: window and hot keys first, content in the background
 src/daemon.zig   Daemon for --unload-mode process: hot keys and socket, starts the UI process
 src/control.zig  Unix socket for show, hide, toggle, emoji, status and quit
-src/main.zig     Command line
+src/main.zig     Command line; messages.zig holds its texts in German and English
 src/shots.zig    Offscreen pictures for `zig build shots`
 ```
 
@@ -357,7 +378,8 @@ Rust version:
 - Emoji pictures: nanoui draws text in one colour, so Core Text renders each
   visible emoji once into a colour picture (`src/ui/glyphs.zig`).
 - Emoji with the mouse: right-click and long press open the skin tones.
-- Size: 3.5 MB instead of about 12 MB.
+- Languages: English and German; the Rust version speaks German only.
+- Size: 3.6 MB instead of about 12 MB.
 - Apple Intelligence: `src/mac/intelligence.zig` replaces six private AppKit
   methods with empty ones before the start, and only when their signature is
   the expected one.

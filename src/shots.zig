@@ -1,6 +1,6 @@
 //! The palette's states as pictures, rendered offscreen (`zig build shots`):
 //! the app list, the calculator, a sheet, the history, the emoji grid and
-//! the help.
+//! the help, in German (`de/`) and in English (`en/`).
 //! No window opens. The app list holds apps every Mac has, with the icons
 //! AppKit draws for them; the icon cache stays untouched.
 const std = @import("std");
@@ -70,43 +70,31 @@ pub fn main(init: std.process.Init) !void {
         .action = .{ .launch_application = app.path },
     };
 
-    const Shot = struct { name: []const u8, steps: []const Step };
-    const shots = [_]Shot{
-        .{ .name = "01-apps", .steps = &.{} },
-        .{ .name = "02-search", .steps = &.{.{ .type = "s" }} },
-        .{ .name = "03-calc", .steps = &.{.{ .type = "(1.299 + 89,90) × 3" }} },
-        .{ .name = "04-calc-pasted", .steps = &.{.{ .paste = "Netto 1.299,00 € zzgl. 19 % MwSt." }} },
-        .{ .name = "05-calc-units", .steps = &.{.{ .type = "2,4 GB in MB" }} },
-        .{ .name = "06-calc-unfinished", .steps = &.{.{ .type = "(1.299 + 89,90) ×" }} },
-        .{
-            .name = "07-sheet",
-            .steps = &.{.{ .paste = "Hotel 3 × 129,00\nBahn 2 × 89,90\nEssen 146,35\n" ++
-                "Taxi 38,50 − 10 %\nTrinkgeld" }},
-        },
-        .{ .name = "08-emoji", .steps = &.{.emoji} },
-        .{ .name = "09-emoji-search", .steps = &.{ .emoji, .{ .type = "daumen" } } },
-        .{
-            .name = "10-emoji-tones",
-            .steps = &.{ .emoji, .{ .type = "daumen hoch" }, .{ .chord = .{ .key = S.tab } } },
-        },
-        .{ .name = "11-empty", .steps = &.{.{ .type = "xylofon" }} },
-        .{ .name = "12-direct", .steps = &.{.{ .type = "https://example.com" }} },
-        .{ .name = "13-help", .steps = &.{ .{ .type = "?" }, down, down, down } },
-        .{ .name = "14-help-word", .steps = &.{.{ .type = "help" }} },
-        .{
-            .name = "15-help-tried",
-            .steps = &.{ .{ .type = "?" }, down, down, down, .enter },
-        },
-        .{ .name = "16-help-tip", .steps = &.{.help_tip} },
-    };
+    const languages = [_]struct { core.Language, []const Shot }{ .{ .de, &shots_de }, .{ .en, &shots_en } };
+    for (languages) |language| {
+        const dir = try init.arena.allocator().print("{s}/{s}", .{ out_dir, language[0].code() });
+        try std.Io.Dir.cwd().createDirPath(io, dir);
+        for (language[1]) |shot| try render(gpa, io, init.environ_map.get("HOME"), &items, language[0], dir, shot);
+    }
+}
 
-    for (shots) |shot| {
+/// Renders one state of the palette to `dir/<name>.png`.
+fn render(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    home: ?[]const u8,
+    items: []const core.Item,
+    lang: core.Language,
+    dir: []const u8,
+    shot: Shot,
+) !void {
+    {
         var host: Host = .{};
         var p: Palette = .init(
             gpa,
             io,
-            init.environ_map.get("HOME"),
-            .both(.de),
+            home,
+            .both(lang),
             .{
                 .ctx = &host,
                 .emit = Host.emit,
@@ -118,7 +106,7 @@ pub fn main(init: std.process.Init) !void {
         defer p.deinit();
         // Pictures do not depend on how busy the machine is.
         p.calc.budget_ns = 5 * std.time.ns_per_s;
-        _ = try p.setCatalog(&items);
+        _ = try p.setCatalog(items);
         var t: ui.Tester = undefined;
         try t.init(gpa, .init(&p, Palette.view), .{ .width = 640, .height = 420, .theme = theme.window });
         defer t.deinit();
@@ -140,11 +128,66 @@ pub fn main(init: std.process.Init) !void {
             },
         };
         t.settle(1);
-        const path = try init.arena.allocator().print("{s}/{s}.png", .{ out_dir, shot.name });
+        var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const path = try std.mem.print(&buf, "{s}/{s}.png", .{ dir, shot.name });
         try t.screenshot(path);
         std.debug.print("{s}\n", .{path});
     }
 }
+
+const Shot = struct { name: []const u8, steps: []const Step };
+
+const shots_de = [_]Shot{
+    .{ .name = "01-apps", .steps = &.{} },
+    .{ .name = "02-search", .steps = &.{.{ .type = "s" }} },
+    .{ .name = "03-calc", .steps = &.{.{ .type = "(1.299 + 89,90) × 3" }} },
+    .{ .name = "04-calc-pasted", .steps = &.{.{ .paste = "Netto 1.299,00 € zzgl. 19 % MwSt." }} },
+    .{ .name = "05-calc-units", .steps = &.{.{ .type = "2,4 GB in MB" }} },
+    .{ .name = "06-calc-unfinished", .steps = &.{.{ .type = "(1.299 + 89,90) ×" }} },
+    .{
+        .name = "07-sheet",
+        .steps = &.{.{ .paste = "Hotel 3 × 129,00\nBahn 2 × 89,90\nEssen 146,35\n" ++
+            "Taxi 38,50 − 10 %\nTrinkgeld" }},
+    },
+    .{ .name = "08-emoji", .steps = &.{.emoji} },
+    .{ .name = "09-emoji-search", .steps = &.{ .emoji, .{ .type = "daumen" } } },
+    .{
+        .name = "10-emoji-tones",
+        .steps = &.{ .emoji, .{ .type = "daumen hoch" }, .{ .chord = .{ .key = S.tab } } },
+    },
+    .{ .name = "11-empty", .steps = &.{.{ .type = "xylofon" }} },
+    .{ .name = "12-direct", .steps = &.{.{ .type = "https://example.com" }} },
+    .{ .name = "13-help", .steps = &.{ .{ .type = "?" }, down, down, down } },
+    .{ .name = "14-help-word", .steps = &.{.{ .type = "hilfe" }} },
+    .{ .name = "15-help-tried", .steps = &.{ .{ .type = "?" }, down, down, down, .enter } },
+    .{ .name = "16-help-tip", .steps = &.{.help_tip} },
+};
+
+const shots_en = [_]Shot{
+    .{ .name = "01-apps", .steps = &.{} },
+    .{ .name = "02-search", .steps = &.{.{ .type = "s" }} },
+    .{ .name = "03-calc", .steps = &.{.{ .type = "(1,299 + 89.90) × 3" }} },
+    .{ .name = "04-calc-pasted", .steps = &.{.{ .paste = "Net $1,299.00 plus 19% sales tax" }} },
+    .{ .name = "05-calc-units", .steps = &.{.{ .type = "2.4 GB in MB" }} },
+    .{ .name = "06-calc-unfinished", .steps = &.{.{ .type = "(1,299 + 89.90) ×" }} },
+    .{
+        .name = "07-sheet",
+        .steps = &.{.{ .paste = "Hotel 3 × 129.00\nTrain 2 × 89.90\nDinner 146.35\n" ++
+            "Taxi 38.50 − 10%\nTip" }},
+    },
+    .{ .name = "08-emoji", .steps = &.{.emoji} },
+    .{ .name = "09-emoji-search", .steps = &.{ .emoji, .{ .type = "thumbs" } } },
+    .{
+        .name = "10-emoji-tones",
+        .steps = &.{ .emoji, .{ .type = "thumbs up" }, .{ .chord = .{ .key = S.tab } } },
+    },
+    .{ .name = "11-empty", .steps = &.{.{ .type = "xylophone" }} },
+    .{ .name = "12-direct", .steps = &.{.{ .type = "https://example.com" }} },
+    .{ .name = "13-help", .steps = &.{ .{ .type = "?" }, down, down, down } },
+    .{ .name = "14-help-word", .steps = &.{.{ .type = "help" }} },
+    .{ .name = "15-help-tried", .steps = &.{ .{ .type = "?" }, down, down, down, .enter } },
+    .{ .name = "16-help-tip", .steps = &.{.help_tip} },
+};
 
 const Step = union(enum) {
     type: []const u8,

@@ -14,7 +14,7 @@ wrapper, no other platforms.
 ## Users
 
 Keyboard-first people on their own Mac who start many apps a day and want a palette that is
-there the moment they press the hot key. The interface is German.
+there the moment they press the hot key. The interface speaks German and English.
 
 ## Product Purpose
 
@@ -63,6 +63,9 @@ Confirmed:
   copied in between. Without the Accessibility permission, or while secure input is on, Return
   copies only and the footer says so.
 - A help on `?` with one example per topic.
+- German and English: the texts and emoji names follow the first preferred language of macOS
+  (German for German, English for every other language), the calculator's notation follows the
+  region's decimal separator; `--language de|en` sets both.
 - Single instance over a Unix socket (`show`, `hide`, `toggle`, `emoji`, `status`, `quit`);
   headless `apps`, `emojis`, `calc` and `icons` commands.
 - Optional unloading after an idle time: the window only, or the whole UI process behind a small
@@ -93,7 +96,8 @@ Limits:
 
 ## Brand Commitments
 
-- Name: Zugriff, German for *access*. German interface; direct, short wording.
+- Name: Zugriff, German for *access*. German and English interface; direct, short wording in
+  both.
 - A warm dark theme (accent `#f0b35a`, background `#101116`).
 - A calm, native macOS look: no marketing, no telemetry, no decorative animation.
 - Translucent rather than opaque: the desktop stays visible behind the palette as colour and
@@ -115,7 +119,7 @@ Limits:
 - Full keyboard control and a visible selection.
 - High contrast in the dark theme; light mode and a full VoiceOver audit are still open.
 - No animations, so reduced motion holds by default.
-- German interface texts; no state is shown by colour alone.
+- German and English interface texts; no state is shown by colour alone.
 
 ## Decisions and planned work
 
@@ -131,6 +135,8 @@ Confirmed:
 - Calculator: the result card above the hits; Return copies as shown and closes; a reopen shortly
   after shows the calculation again (90 s); the history stays in memory; no exchange rates and no
   inserting into the app in front.
+- Languages: the texts follow the language of macOS and the numbers its region, as other Mac
+  apps do; other languages than German get English. A new text is written in both.
 - Emoji picker: on `⌃⌘Space` and `:`, with skin tones; Return inserts (with the Accessibility
   permission, else copies); the recently used emoji and the skin tone are saved. Emoji next to the
   apps and a picker at the text cursor are deliberately left out.
