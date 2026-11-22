@@ -78,7 +78,9 @@ pub fn render(a: std.mem.Allocator, io: std.Io, home: ?[]const u8, app: []const 
     return .{ .path = path, .png = png };
 }
 
-fn renderPng(a: std.mem.Allocator, io: std.Io, app: []const u8) ![]u8 {
+/// The bundle icon as a PNG of `pixels` × `pixels`, without the cache.
+/// AppKit: main thread only.
+pub fn renderPng(a: std.mem.Allocator, io: std.Io, app: []const u8) ![]u8 {
     const pool = objc.Pool.push();
     defer pool.pop();
     // AppKit badges the icon of an alias, and `/Applications/Safari.app` is a

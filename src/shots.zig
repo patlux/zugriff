@@ -1,7 +1,8 @@
 //! The palette's states as pictures, rendered offscreen (`zig build shots`):
 //! the app list, the calculator, a sheet, the history, the emoji grid and
 //! the help.
-//! No window opens.
+//! No window opens. The app list holds apps every Mac has, with the icons
+//! AppKit draws for them; the icon cache stays untouched.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
@@ -10,6 +11,7 @@ const core = @import("core.zig");
 const theme = @import("ui/theme.zig");
 const palette_mod = @import("ui/palette.zig");
 const Palette = palette_mod.Palette;
+const icons = @import("mac/icons.zig");
 
 const Host = struct {
     clipboard: []const u8 = "",
@@ -27,20 +29,31 @@ const Host = struct {
     fn beep(_: *anyopaque) void {}
 };
 
-const titles = [_][]const u8{
-    "Arc",
-    "Calculator",
-    "Finder",
-    "Ghostty",
-    "Mail",
-    "Notes",
-    "Safari",
-    "System Settings",
-    "Terminal",
-    "Xcode",
-    "Zed",
-    "Zoom",
+const SampleApp = struct { title: []const u8, path: []const u8 };
+
+/// Apps that come with macOS, sorted by name as the scan sorts them.
+const sample_apps = [_]SampleApp{
+    .{ .title = "Calculator", .path = "/System/Applications/Calculator.app" },
+    .{ .title = "Calendar", .path = "/System/Applications/Calendar.app" },
+    .{ .title = "Finder", .path = "/System/Library/CoreServices/Finder.app" },
+    .{ .title = "Mail", .path = "/System/Applications/Mail.app" },
+    .{ .title = "Maps", .path = "/System/Applications/Maps.app" },
+    .{ .title = "Music", .path = "/System/Applications/Music.app" },
+    .{ .title = "Notes", .path = "/System/Applications/Notes.app" },
+    .{ .title = "Photos", .path = "/System/Applications/Photos.app" },
+    .{ .title = "Safari", .path = "/Applications/Safari.app" },
+    .{ .title = "Shortcuts", .path = "/System/Applications/Shortcuts.app" },
+    .{ .title = "System Settings", .path = "/System/Applications/System Settings.app" },
+    .{ .title = "Terminal", .path = "/System/Applications/Utilities/Terminal.app" },
 };
+
+/// The app's icon as AppKit draws it, kept in memory. An app this Mac lacks
+/// keeps its monogram tile.
+fn appIcon(a: std.mem.Allocator, io: std.Io, app: []const u8) ?core.Icon {
+    std.Io.Dir.cwd().access(io, app, .{}) catch return null;
+    const png = icons.renderPng(a, io, app) catch return null;
+    return .{ .path = app, .png = png };
+}
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
@@ -49,11 +62,12 @@ pub fn main(init: std.process.Init) !void {
     const out_dir = if (args.len > 1) args[1] else "zig-out/shots";
     try std.Io.Dir.cwd().createDirPath(io, out_dir);
 
-    var items: [titles.len]core.Item = undefined;
-    for (titles, &items) |t, *it| it.* = .{
-        .title = t,
-        .subtitle = "/Applications",
-        .action = .{ .launch_application = try init.arena.allocator().print("/Applications/{s}.app", .{t}) },
+    var items: [sample_apps.len]core.Item = undefined;
+    for (sample_apps, &items) |app, *it| it.* = .{
+        .title = app.title,
+        .subtitle = std.Io.Dir.path.dirname(app.path) orelse "/",
+        .icon = appIcon(init.arena.allocator(), io, app.path),
+        .action = .{ .launch_application = app.path },
     };
 
     const Shot = struct { name: []const u8, steps: []const Step };
