@@ -14,4 +14,4 @@ The emoji table (`src/core/emoji_data.zig` and `src/core/emoji_strings.txt`) is 
 annotations 47, both under the Unicode License v3 (<https://www.unicode.org/license.txt>), and
 the gemoji shortcodes 4.1.0 (<https://github.com/github/gemoji>, MIT).
 
-This notice does not assign a license to the rest of Zugriff.
+Zugriff itself is licensed under the MIT license: see `LICENSE`.
