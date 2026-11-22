@@ -347,9 +347,9 @@ src/shots.zig    Offscreen pictures for `zig build shots`
 ## Background
 
 Zugriff started as a Rust app on GPUI. This Zig version replaced it in
-November 2026 and reads the same emoji history. `PRODUCT.md` and the FigCraft drafts in `design/figcraft` come
-from the Rust version and describe what the palette should do (in German).
-Where this version differs:
+November 2026 and reads the same emoji history. `PRODUCT.md` describes what
+the palette is for and what it leaves out. Where this version differs from the
+Rust version:
 
 - Calculator: its own evaluator with exact fractions replaces fend-core. The
   Rust version's calculator tests pass unchanged; where fend was approximate,
