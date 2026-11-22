@@ -276,8 +276,10 @@ fn score(e: Emoji, token: []const u8, language: Language) ?u32 {
         .en => {
             nameScore(&best, english_name, token);
             listScore(&best, english.rest(), token, .{ keyword_exact, keyword_prefix, keyword_word });
-            listScore(&best, e.folded, token, .{ english_exact, english_prefix, english_word });
-            listScore(&best, e.keywords, token, .{ english_exact, english_prefix, english_word });
+            // A whole German word is meant as such: `herz` is a heart, not
+            // the start of Herzegovina. Many who read English type German.
+            listScore(&best, e.folded, token, .{ keyword_exact, english_prefix, english_word });
+            listScore(&best, e.keywords, token, .{ keyword_exact, english_prefix, english_word });
         },
     }
 
@@ -503,7 +505,10 @@ test "English names rank first in English and German ones still find" {
     try testing.expectEqualStrings("❤️", get(hits[0]).glyph);
     const german = try search(testing.allocator, "herz", &.{}, .en);
     defer testing.allocator.free(german);
-    try testing.expect(german.len > 0);
+    const first = get(german[0]);
+    const in_german = std.mem.find(u8, first.folded, "herz") != null or
+        std.mem.find(u8, first.keywords, "herz") != null;
+    try testing.expect(in_german);
     const joy = get((find("😂") orelse return error.NoEmoji).index);
     try testing.expectEqualStrings("face with tears of joy", joy.nameIn(.en));
     try testing.expectEqualStrings("Gesicht mit Freudentränen", joy.nameIn(.de));
