@@ -171,6 +171,11 @@ zugriff run --unload-after 60
 zugriff run --unload-after 60 --unload-mode process
 ```
 
+On a Mac that is often busy, use `window`. It makes only the window again,
+inside the running agent. `process` must start a new process at the hot key,
+and that takes longer when the CPU and the disk have other work. Also start the
+agent with `ProcessType` set to `Interactive` (see [Start at login](#start-at-login)).
+
 ## Performance
 
 Measured with Zugriff 0.2.2 (ReleaseSafe) on a MacBook Pro with M2 Max,
@@ -259,6 +264,9 @@ in the path:
   </array>
   <key>RunAtLoad</key>
   <true/>
+  <!-- Without it launchd throttles the CPU and I/O of the agent. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
   <!-- Restart after a crash, stay stopped after `zugriff quit`. -->
   <key>KeepAlive</key>
   <dict>
@@ -274,6 +282,12 @@ in the path:
 ```sh
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.zugriff.plist
 ```
+
+If you do not set `ProcessType`, launchd applies light resource limits to the
+agent and throttles its CPU and I/O. When the Mac is busy, the palette then
+opens later. `Interactive` gives it the limits of an app, which means none.
+`launchctl print gui/$(id -u)/local.zugriff` shows `spawn type = interactive`
+when the setting is active.
 
 After an update, copy the new binary and restart the agent with
 `launchctl kickstart -k gui/$(id -u)/local.zugriff`. `make install` does both
